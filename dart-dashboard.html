@@ -109,6 +109,17 @@ svg.board.live .f:active{filter:brightness(1.8)}
 .pc .tm .on::before{content:'▶ ';color:var(--c)}
 tr.click{cursor:pointer}
 .banner{border-color:var(--gold)}
+.badges{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}
+.bd{display:flex;gap:10px;align-items:center;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.bd i{font-style:normal;font-size:26px;flex:none;width:34px;text-align:center}
+.bd b{display:block;font-size:14px}
+.bd small{color:var(--mute);font-size:12px;line-height:1.3;display:block}
+.bd.got{border-color:var(--gold)}
+.bd:not(.got){opacity:.45}
+.bd:not(.got) i{filter:grayscale(1)}
+.news{text-align:left;background:var(--panel2);border-radius:12px;padding:10px 14px;margin-top:12px;font-size:14px}
+.news b{color:var(--gold)}
+.news div{margin-top:4px}
 @media (min-width:820px) and (orientation:landscape){
   main.g{padding:8px 10px;max-width:none}
   .game{display:grid;grid-template-columns:minmax(300px,1fr) auto;gap:10px;height:calc(100dvh - 74px);min-height:420px}
@@ -182,13 +193,15 @@ db.setup=Object.assign({mode:'x01',start:501,in:'straight',out:'single',legs:1,s
 db.cfg=Object.assign({voice:true,sound:true,wake:true},db.cfg||{});
 if(db.sinceBackup==null)db.sinceBackup=db.matches.length;
 let G=lsGet(LSG), hist=[], view='play', editIdx=null, curP=null, curM=null, rng=0;
+if(G){G.news=G.news||[];G.pb=G.pb||{};G.badges=G.badges||{}}
+db.setup.bot=db.setup.bot||0;
 const save=()=>lsSet(LS,db), saveG=()=>lsSet(LSG,G);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const $=s=>document.querySelector(s);
 const num=(x,d=1)=>isFinite(x)?x.toFixed(d).replace('.',','):'–';
 const pct=(a,b)=>b?Math.round(a/b*100)+' %':'–';
-function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('on'),2600)}
+function toast(t,ms=2600){const e=$('#toast');e.textContent=t;e.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('on'),ms)}
 const lab=t=>!t.m?'Miss':t.s==25?(t.m==2?'Bull':'25'):'SDT'[t.m-1]+t.s;
 const MODES={x01:'X01',cricket:'Cricket',atc:'Around the Clock',shanghai:'Shanghai',bob:"Bob's 27",train:'Training'};
 const OUTS={single:'Single Out',double:'Double Out',master:'Master Out'};
@@ -276,11 +289,16 @@ const bobT=()=>G.round<=20?G.round:25;
 function newGame(){
   const s=db.setup, sel=s.sel.filter(id=>db.players.some(p=>p.id==id));
   if(!sel.length){toast('Bitte mindestens einen Spieler wählen');return}
+  const list=sel.map(id=>db.players.find(p=>p.id==id)).map(p=>({id:p.id,name:p.name,color:p.color})),lv=s.mode=='train'?0:s.bot;
+  if(lv)list.push({id:'bot'+lv,name:'Computer ('+BOT[lv].n+')',color:'#94a3b8',bot:lv});
   const tm=!!s.teams&&(s.mode=='x01'||s.mode=='cricket');
-  if(tm&&(sel.length<4||sel.length%2)){toast('Für Teams bitte 4, 6 oder 8 Spieler wählen');return}
+  if(tm&&(list.length<4||list.length%2)){toast('Für Teams bitte 4, 6 oder 8 Spieler wählen (der Computer zählt mit)');return}
   const opts=s.mode=='x01'?{start:s.start,in:s.in,out:s.out,legs:s.legs,sets:s.sets,teams:tm}:s.mode=='cricket'?{teams:tm}:s.mode=='atc'?{bull:s.bull}:s.mode=='shanghai'?{rounds:s.rounds}:{};
   G={v:2,id:uid(),t0:Date.now(),mode:s.mode,opts,cur:0,starter:0,leg:1,set:1,round:1,turn:[],turns:[],legs:[],pending:null,done:false,winner:null,snap:null,
-     players:sel.map((id,i)=>{const p=db.players.find(p=>p.id==id);return{id,name:p.name,color:p.color,team:tm?i%2:null,legs:0,sets:0,lw:0,sum:0,tDarts:0,best:0,last:null,out:false}})};
+     news:[],badges:{},pb:{},
+     players:list.map((p,i)=>({id:p.id,name:p.name,color:p.color,bot:p.bot||0,team:tm?i%2:null,legs:0,sets:0,lw:0,sum:0,tDarts:0,best:0,last:null,out:false}))};
+  // Ausgangswerte für „neue Bestleistung“ und neue Auszeichnungen
+  for(const p of G.players)if(!p.bot){const t=stats(p.id);G.pb[p.id]={g:t.games,best:t.best,co:t.co,short:t.short[s.start]||0,avg:t.bestAvg,bob:t.bob,sh:t.sh,bd:badgeIds(t)}}
   resetLeg();hist=[];editIdx=null;saveG();render();
 }
 function resetLeg(){
@@ -337,8 +355,9 @@ function replay(darts){
   for(const t of darts){if(G.pending)break;applyDart(t)}
 }
 function pushHist(){hist.push(JSON.stringify(G));if(hist.length>80)hist.shift()}
-function throwDart(t){
+function throwDart(t,fromBot){
   if(!G||G.done)return;
+  if(G.players[G.cur].bot&&!fromBot){toast('Der Computer wirft gerade');return}
   if(editIdx!=null&&editIdx<G.turn.length){
     pushHist();const d=G.turn.slice();d[editIdx]=t;replay(d);editIdx=null;
   }else{
@@ -348,22 +367,84 @@ function throwDart(t){
   fx(t.m?'tick':'miss');
   saveG();render();
 }
-function confirmTurn(){
+function confirmTurn(fromBot){
   if(!G||G.done||!G.pending)return;
-  const p=G.players[G.cur],pd=G.pending,sc=turnScore(p,pd.bust);
+  if(G.players[G.cur].bot&&fromBot!==1)return;
+  const p=G.players[G.cur],pd=G.pending,sc=turnScore(p,pd.bust),n0=G.news.length;
   pushHist();editIdx=null;endTurn(pd.bust,pd.win);saveG();render();
+  // Neue persönliche Bestleistung?
+  const nw=G.news.slice(n0),sn=q=>q.bot?'Computer':q.name;
+  if(nw.length){toast('⭐ Neue Bestleistung! '+nw.join(' · '),7000);fx('max')}
+  const pbSay=()=>{if(nw.length)say('Neue persönliche Bestleistung')};
   // Ansage und Töne
   if(G.done){
     const w=G.players.find(q=>q.id==G.winner),ws=w?mates(w):[];
-    fx('win');say(w?'Game shot! '+ws.map(q=>q.name).join(' und ')+(ws.length>1?' gewinnen':' gewinnt'):'Spiel beendet',1);
-  }else if(pd.win){fx('win');say('Game shot! Leg für '+(p.team!=null?'Team '+'AB'[p.team]:p.name),1)}
-  else if(pd.bust){fx('bust');say('Überworfen',1)}
+    fx('win');say(w?'Game shot! '+ws.map(sn).join(' und ')+(ws.length>1?' gewinnen':' gewinnt'):'Spiel beendet',1);
+    pbSay();return;
+  }
+  // Danach: wer ist dran – mit Rest, sobald ein Finish möglich ist
+  const n=G.players[G.cur],multi=G.players.length>1;
+  const next=()=>{
+    if(G.mode=='x01'&&n.in&&n.score<=170&&canFinish(n.score,G.opts.out))say(sn(n)+', '+n.score+' Rest');
+    else if(multi)say(sn(n));
+  };
+  if(pd.win){fx('win');say('Game shot! Leg für '+(p.team!=null?'Team '+'AB'[p.team]:sn(p)),1);pbSay();if(multi)say(sn(n)+' beginnt')}
+  else if(pd.bust){fx('bust');say('Überworfen',1);next()}
   else{
     if(sc==180)fx('max');
-    if(G.mode!='atc')say(String(sc),1);
-    const n=G.players[G.cur];
-    if(G.mode=='x01'&&n.in&&n.score<=170&&canFinish(n.score,G.opts.out))say(n.name+', '+n.score+' Rest');
+    if(G.mode!='atc')say(String(sc),1);else if(typeof speechSynthesis!='undefined')speechSynthesis.cancel();
+    pbSay();next();
   }
+}
+/* Bestleistungen während des Spiels – erst ab 3 früheren Spielen, sonst wäre anfangs alles ein Rekord */
+function pbCheck(p,sc,win){
+  const b=G.pb[p.id];if(p.bot||!b||b.g<3)return;
+  if(SCORING(G.mode)&&b.best>0&&sc>b.best){G.news.push(p.name+': höchste Aufnahme '+sc+' (bisher '+b.best+')');b.best=sc}
+  if(win&&G.mode=='x01'){
+    if(b.co>0&&sc>b.co){G.news.push(p.name+': höchstes Finish '+sc+' (bisher '+b.co+')');b.co=sc}
+    if(p.team==null&&b.short&&p.legDarts<b.short){G.news.push(p.name+': kürzestes Leg mit '+p.legDarts+' Darts (bisher '+b.short+')');b.short=p.legDarts}
+  }
+}
+
+/* ================= Computergegner ================= */
+/* sd = Streuung in mm auf einer echten Scheibe; avg = ungefährer 3-Dart-Average bei 501 Double Out */
+const BOT=[null,{n:'Anfänger',sd:30,avg:30},{n:'Leicht',sd:20,avg:40},{n:'Mittel',sd:16.5,avg:50},{n:'Stark',sd:14,avg:60},{n:'Sehr stark',sd:10.5,avg:75},{n:'Profi',sd:7.8,avg:90}];
+let botT=null;
+function gauss(){let u=0;while(!u)u=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*Math.random())}
+function botAim(p){
+  const m=G.mode,tr=n=>n==25?{s:25,m:2}:{s:n,m:3};
+  if(m=='x01'){
+    if(!p.in)return{s:20,m:2};
+    const co=checkout(p.score,3-G.turn.length,G.opts.out)||checkout(p.score,3,G.opts.out);
+    return co?co[0]:{s:20,m:3};
+  }
+  if(m=='cricket'){
+    const open=CR.filter(n=>p.marks[n]<3);if(open.length)return tr(open[0]);
+    const n=CR.find(n=>G.players.some(o=>o!==p&&o.marks[n]<3));return tr(n||25);
+  }
+  if(m=='atc')return{s:p.target,m:p.target==25?2:1};
+  if(m=='shanghai')return{s:G.round,m:3};
+  if(m=='bob')return{s:bobT(),m:2};
+  return{s:20,m:3};
+}
+/* Wurf simulieren: Zielpunkt auf echter Scheibengeometrie plus zufällige Streuung */
+const REAL=[0,6.35,15.9,99,107,162,170,230],SHOWN=[0,16,34,90,120,150,182,208];
+function botHit(aim,sd){
+  const a=aim.s==25?0:ORD.indexOf(aim.s)*18*Math.PI/180,r0=aim.s==25?0:aim.m==3?103:aim.m==2?166:134;
+  const x=r0*Math.sin(a)+gauss()*sd,y=-r0*Math.cos(a)+gauss()*sd,r=Math.hypot(x,y);
+  let i=1;while(i<7&&r>REAL[i])i++;
+  const rd=Math.min(206,SHOWN[i-1]+(SHOWN[i]-SHOWN[i-1])*(r-REAL[i-1])/(REAL[i]-REAL[i-1])),k=r?rd/r:0;
+  const t={x:+(x*k).toFixed(1),y:+(y*k).toFixed(1)};
+  if(r<=6.35){t.s=25;t.m=2}else if(r<=15.9){t.s=25;t.m=1}else if(r>170){t.s=0;t.m=0}
+  else{t.s=ORD[Math.floor(((Math.atan2(x,-y)*180/Math.PI+369)%360)/18)];t.m=r>=162?2:r>=99&&r<=107?3:1}
+  return t;
+}
+function botTick(){
+  if(botT||!G||G.done||!G.players[G.cur].bot)return;
+  botT=setTimeout(()=>{
+    botT=null;if(!G||G.done)return;const p=G.players[G.cur];if(!p.bot)return;
+    if(G.pending)confirmTurn(1);else throwDart(botHit(botAim(p),BOT[p.bot].sd),1);
+  },G.pending?1600:G.turn.length?850:1300);
 }
 function turnScore(p,bust){
   return bust?0:G.mode=='x01'?G.ts-p.score:G.mode=='cricket'?p.pts-G.ts:G.mode=='atc'?0:p.score-G.ts;
@@ -373,6 +454,7 @@ function endTurn(bust,win){
   G.turns.push({p:p.id,leg:G.leg,d:G.turn.map(t=>[t.s,t.m]),sc,bust:bust?1:0});
   p.last={d:G.turn.map(lab),sc,bust};p.sum+=sc;p.tDarts+=G.turn.length;if(sc>p.best)p.best=sc;
   G.turn=[];G.pending=null;
+  pbCheck(p,sc,win);
   if(win){
     if(G.mode!='x01'){finish(p.id);return}
     const ms=mates(p),who=p.team!=null?'Team '+'AB'[p.team]:p.name;
@@ -411,13 +493,24 @@ function finish(wid){
   const wp=G.players.find(p=>p.id==wid);
   db.sinceBackup=(db.sinceBackup||0)+1;
   db.matches.push({id:G.id,date:G.t0,mode:G.mode,opts:G.opts,
-    players:G.players.map(p=>({id:p.id,name:p.name,team:p.team,res:G.mode=='cricket'?p.pts:G.mode=='atc'?null:p.score,sets:p.sets,lw:p.lw})),
+    players:G.players.map(p=>({id:p.id,name:p.name,team:p.team,bot:p.bot||undefined,res:G.mode=='cricket'?p.pts:G.mode=='atc'?null:p.score,sets:p.sets,lw:p.lw})),
     winner:wid,wt:wp?wp.team:null,turns:G.turns,legs:G.legs,dur:Math.round((Date.now()-G.t0)/1000)});
+  // Bestleistungen und neue Auszeichnungen am Spielende
+  for(const p of G.players){
+    const b=G.pb[p.id];if(p.bot||!b)continue;
+    if(b.g>=3){
+      if(G.mode=='x01'&&p.tDarts>=9){const a=p.sum/p.tDarts*3;if(b.avg>0&&a>b.avg)G.news.push(p.name+': bester Spiel-Average '+num(a)+' (bisher '+num(b.avg)+')')}
+      if(G.mode=='bob'||G.mode=='shanghai'){const o=G.mode=='bob'?b.bob:b.sh;if(o!=null&&p.score>o)G.news.push(p.name+': '+MODES[G.mode]+'-Bestwert '+p.score+' (bisher '+o+')')}
+    }
+    const nb=badgeIds(stats(p.id)).filter(k=>!b.bd.includes(k));if(nb.length)G.badges[p.id]=nb;
+  }
   save();
 }
 function undo(){
   if(!hist.length){toast('Nichts zum Rückgängigmachen');return}
   const id=G.id;G=JSON.parse(hist.pop());editIdx=null;
+  if(botT){clearTimeout(botT);botT=null}
+  while(hist.length&&!G.done&&G.players[G.cur].bot)G=JSON.parse(hist.pop());   // Würfe des Computers überspringen
   const n=db.matches.length;db.matches=db.matches.filter(m=>m.id!=id);if(db.matches.length!=n){db.sinceBackup=Math.max(0,db.sinceBackup-1);save()}
   saveG();render();
 }
@@ -464,7 +557,7 @@ const DIST=[['0–39',0,39],['40–59',40,59],['60–79',60,79],['80–99',80,99
 function stats(pid,days=0){
   const since=days?Date.now()-days*864e5:0;
   const s={games:0,mg:0,wins:0,pts:0,darts:0,best:0,freq:{},c180:0,c140:0,c100:0,co:0,short:{},hits:{},seg:{},miss:0,all:0,f9p:0,f9d:0,fast:null,modes:{},
-    trend:[],dist:DIST.map(()=>0),nTurns:0,coTry:0,coHit:0,legsP:0,legsW:0,wDarts:0,h2h:{},bob:null,sh:null,busts:0,dbl:{},dTry:0,dHit:0,streak:0,bestAvg:0,wl:0};
+    trend:[],dist:DIST.map(()=>0),nTurns:0,coTry:0,coHit:0,legsP:0,legsW:0,wDarts:0,h2h:{},bob:null,sh:null,busts:0,dbl:{},dTry:0,dHit:0,streak:0,bestAvg:0,wl:0,coBull:0,shInst:0,botMax:0};
   let cs=0;
   for(const m of db.matches){
     if(m.date<since||!m.players.some(p=>p.id==pid))continue;
@@ -477,13 +570,16 @@ function stats(pid,days=0){
     if(won&&m.dur&&(!s.fast||m.dur<s.fast.dur))s.fast={dur:m.dur,l:m.mode=='x01'?m.opts.start:MODES[m.mode]};
     if(m.mode=='bob'&&me.res!=null&&(s.bob==null||me.res>s.bob))s.bob=me.res;
     if(m.mode=='shanghai'&&me.res!=null&&(s.sh==null||me.res>s.sh))s.sh=me.res;
-    const cnt={},rest={},inn={},side={},sc=SCORING(m.mode),x=m.mode=='x01';let mp=0,md=0;
+    if(won)for(const o of m.players)if(o.bot>s.botMax)s.botMax=o.bot;
+    const cnt={},rest={},inn={},side={},sc=SCORING(m.mode),x=m.mode=='x01';let mp=0,md=0,lastT=null;
     m.players.forEach(p=>side[p.id]=p.team!=null?'t'+p.team:p.id);
     for(const t of m.turns){
       // Rest wird je Seite (Spieler oder Team) mitgeführt
       const k=t.leg+'|'+side[t.p];let r=0;
       if(x){r=rest[k]??m.opts.start;rest[k]=r-t.sc}
       if(t.p!=pid){if(x&&t.d.some(d=>d[1]==2))inn[k]=1;continue}
+      lastT=t;
+      if(x&&!t.bust&&t.sc>0&&r-t.sc==0){const l=t.d[t.d.length-1];if(l[0]==25&&l[1]==2)s.coBull++}
       for(const[n,mu]of t.d){s.all++;if(!mu)s.miss++;else{const k=lab({s:n,m:mu});s.hits[k]=(s.hits[k]||0)+1;s.seg[n+'_'+mu]=(s.seg[n+'_'+mu]||0)+1}}
       if(!sc)continue;
       s.pts+=t.sc;s.darts+=t.d.length;mp+=t.sc;md+=t.d.length;if(t.sc>s.best)s.best=t.sc;
@@ -505,6 +601,7 @@ function stats(pid,days=0){
         if(isIn)inn[k]=1;
       }
     }
+    if(m.mode=='shanghai'&&won&&lastT&&lastT.d.length==3&&new Set(lastT.d.map(d=>d[0])).size==1&&new Set(lastT.d.map(d=>d[1])).size==3&&lastT.d.every(d=>d[1]))s.shInst++;
     if(m.mode=='x01'){
       if(md){s.trend.push({d:m.date,v:mp/md*3,l:m.opts.start});if(md>=9&&mp/md*3>s.bestAvg)s.bestAvg=mp/md*3}
       for(const l of m.legs||[]){
@@ -521,6 +618,40 @@ function stats(pid,days=0){
   s.shortTxt=Object.entries(s.short).map(([k,v])=>v+' Darts ('+k+')').join(', ');
   return s;
 }
+/* ================= Auszeichnungen ================= */
+/* Werden immer aus dem Verlauf berechnet – nichts wird extra gespeichert */
+const BADGES=[
+  ['g1','🎯','Erster Wurf','Das erste Spiel gespielt',s=>s.games>=1],
+  ['g25','🍻','Stammgast','25 Spiele gespielt',s=>s.games>=25],
+  ['g100','💯','Dauerbrenner','100 Spiele gespielt',s=>s.games>=100],
+  ['d1k','🏹','Tausendsassa','1.000 Darts geworfen',s=>s.all>=1000],
+  ['d5k','🚀','Wurfmaschine','5.000 Darts geworfen',s=>s.all>=5000],
+  ['w1','🏆','Erster Sieg','Ein Spiel gegen andere gewonnen',s=>s.wins>=1],
+  ['w10','🥇','Seriensieger','10 Siege',s=>s.wins>=10],
+  ['w50','👑','Champion','50 Siege',s=>s.wins>=50],
+  ['st3','🔥','Lauf','3 Siege in Folge',s=>s.streak>=3],
+  ['st5','☄️','Unaufhaltsam','5 Siege in Folge',s=>s.streak>=5],
+  ['t100','💥','Ton','Eine Aufnahme mit 100 oder mehr',s=>s.c100+s.c140+s.c180>=1],
+  ['t140','⚡','Ton 40','Eine Aufnahme mit 140 oder mehr',s=>s.c140+s.c180>=1],
+  ['t180','🌟','Maximum','Die erste 180',s=>s.c180>=1],
+  ['t180x','✨','180er-Sammler','Zehn 180er',s=>s.c180>=10],
+  ['c1','✅','Ausgemacht','Das erste Leg ausgecheckt',s=>s.coHit>=1],
+  ['c100','🎣','High Finish','Ein Finish von 100 oder mehr',s=>s.co>=100],
+  ['c170','🐟','Big Fish','Das 170er-Finish',s=>s.co>=170],
+  ['cb','🐂','Bull-Finish','Ein Leg auf dem Bull ausgecheckt',s=>s.coBull>=1],
+  ['dq','🎓','Doppel-Spezialist','Doppelquote ab 30 % bei mindestens 20 Versuchen',s=>s.dTry>=20&&s.dHit/s.dTry>=.3],
+  ['l21','⏱️','Schnellschütze','Ein 501-Leg in höchstens 21 Darts',s=>s.short[501]>0&&s.short[501]<=21],
+  ['l15','🏎️','15-Darter','Ein 501-Leg in höchstens 15 Darts',s=>s.short[501]>0&&s.short[501]<=15],
+  ['a60','📈','Im Flow','Ein X01-Spiel mit Average ab 60',s=>s.bestAvg>=60],
+  ['a80','📊','Scoring-Monster','Ein X01-Spiel mit Average ab 80',s=>s.bestAvg>=80],
+  ['sh','🀄','Shanghai!','Shanghai per Single, Double und Triple gewonnen',s=>s.shInst>=1],
+  ['bob','🎲','Bob überlebt',"Bob's 27 mit Punkten im Plus beendet",s=>s.bob>0],
+  ['all','🧭','Allrounder','Alle sechs Spielmodi gespielt',s=>Object.keys(MODES).every(k=>s.modes[k])],
+  ['bot','🤖','Maschinenbezwinger','Den Computer besiegt',s=>s.botMax>=1],
+  ['bot5','🦾','Endgegner','Den Computer auf „Sehr stark“ oder „Profi“ besiegt',s=>s.botMax>=5]
+];
+const badgeIds=s=>BADGES.filter(b=>b[4](s)).map(b=>b[0]);
+const badgeHTML=(b,got)=>`<div class="bd ${got?'got':''}"><i>${b[1]}</i><div><b>${b[2]}</b><small>${b[3]}</small></div></div>`;
 const dur=t=>Math.floor(t/60)+':'+String(t%60).padStart(2,'0')+' min';
 const dShort=d=>new Date(d).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'});
 function trendSVG(tr){
@@ -545,7 +676,7 @@ function render(){
   const app=$('#app');app.className=view=='play'&&G?'g':'';
   app.innerHTML=(storageOk?'':'<div class="card" style="border-color:var(--red)">⚠️ Der Browser erlaubt hier kein Speichern. Bitte Daten nach dem Spielen über „Daten“ exportieren.</div>')+
     (view=='play'?(G?vGame():vSetup()):view=='players'?vPlayers():view=='player'?vPlayer():view=='records'?vRecords():view=='history'?vHistory():view=='match'?vMatch():vData());
-  wake();
+  wake();botTick();
 }
 const seg=(k,arr)=>'<div class="seg">'+arr.map(([v,l])=>`<button data-act="set" data-k="${k}" data-v='${JSON.stringify(v)}' class="${db.setup[k]===v?'on':''}">${l}</button>`).join('')+'</div>';
 function vSetup(){
@@ -562,6 +693,7 @@ function vSetup(){
   if(s.mode=='bob')h+='<p class="mute small">Doppel-Training: Start mit 27 Punkten. Reihum 3 Darts auf D1, D2 … D20 und Bull. Jeder Treffer bringt den Wert des Doppels, eine Aufnahme ohne Treffer kostet ihn. Wer auf 0 oder darunter fällt, scheidet aus.</p>';
   if(s.mode=='cricket')h+='<p class="mute small">15–20 und Bull je dreimal treffen. Weitere Treffer zählen als Punkte, solange ein Gegner das Feld offen hat.</p>';
   if(s.mode=='train')h+='<p class="mute small">Freies Werfen ohne Ziel. Würfe fließen in die Statistik ein.</p>';
+  else h+='<h3>Computergegner</h3>'+seg('bot',[[0,'Aus'],...BOT.slice(1).map((b,i)=>[i+1,b.n])])+(s.bot?`<p class="mute small">Der Computer wirft als Letzter in der Reihenfolge und spielt bei X01 ungefähr einen Average von ${BOT[s.bot].avg}. Seine Würfe werden automatisch eingetragen und bestätigt.</p>`:'');
   if(s.mode=='x01'||s.mode=='cricket')h+='<h3>Teams</h3>'+seg('teams',[[false,'Jeder für sich'],[true,'2 Teams']])+(tm?'<p class="mute small">Die Spieler werden in Wurfreihenfolge abwechselnd verteilt: 1., 3., 5. … spielen in Team A, die anderen in Team B. Ein Team teilt sich den Punktestand, es wird abwechselnd geworfen.</p>':'');
   h+=`<h3>Spieler (max. ${MAXP}, Reihenfolge = Wurfreihenfolge)</h3><div class="row">`+
     db.players.map(p=>{const i=s.sel.indexOf(p.id);return`<span class="chip ${i>=0?'on':''}" style="--c:${p.color}" data-act="sel" data-id="${p.id}"><i>${i>=0?i+1:''}</i>${esc(p.name)}${tm&&i>=0?' <span class="mute small">Team '+'AB'[i%2]+'</span>':''}</span>`}).join('')+
@@ -587,6 +719,8 @@ function vGame(){
     if(G.mode=='bob'){const n=bobT();hint='Ziel: '+(n==25?'Bull':'D'+n)+' <small>Treffer +'+2*n+' · kein Treffer −'+2*n+'</small>';hl=(s,m)=>s==n&&m==2}
   }
   if(ed)hint='Dart '+(editIdx+1)+' neu eingeben <small>Feld auf der Scheibe oder „Daneben“ antippen</small>';
+  const bt=!!p.bot&&!G.done;
+  if(bt){hint='🤖 '+esc(p.name)+(pd?(pd.bust?' hat überworfen':pd.win?' checkt!':' ist fertig'):' wirft …');hl=null}
   const tms=!!G.opts.teams,sides=tms?[0,1].map(t=>G.players.filter(q=>q.team===t)):G.players.map(q=>[q]);
   const cards=sides.map(ms=>{
     const on=ms.includes(p),q=on?p:ms[0],i=G.players.indexOf(q);
@@ -610,12 +744,12 @@ function vGame(){
   }
   slots+=`<div class="slot sum"><div class="l">${G.mode=='atc'?'–':pd&&pd.bust?'0':ts}</div><div class="v">Aufnahme</div></div>`;
   let conf='';
-  if(pd&&!ed&&!G.done){
+  if(pd&&!ed&&!G.done&&!bt){
     const nx=G.players.length>1&&!pd.win?' · weiter zum nächsten Spieler':'';
     const main=pd.bust?'✓ Überworfen bestätigen':pd.win?'🏆 '+(x&&(G.opts.legs>1||sets)?'Leg-Gewinn':'Sieg')+' bestätigen':G.mode=='atc'?'✓ Aufnahme bestätigen':'✓ '+ts+' Punkte bestätigen';
     conf=`<div class="confirm"><button class="btn pri ${pd.bust?'bust':''}" data-act="confirm">${main}<small>${G.turn.map(lab).join(' · ')}${nx}</small></button><p>Stimmt etwas nicht? Den falschen Dart oben antippen und neu eingeben.</p></div>`;
   }else conf=`<div class="hint ${hint?'':'none'}">${hint||'&nbsp;'}</div>`;
-  const lock=pd&&!ed&&!G.done;
+  const lock=pd&&!ed&&!G.done&&!bt;
   let h=`<div class="game"><div class="side">
   <div class="info"><span><b>${esc(modeLabel(G))}</b>${sets?' · Set '+G.set:''}${x&&(G.opts.legs>1||sets)?' · Leg '+G.leg:''}${G.mode=='bob'||G.mode=='shanghai'?' · Runde '+G.round:''}</span><span>Am Wurf: <b style="color:${p.color}">${esc(p.name)}</b></span></div>
   <div class="pcards n${sides.length} ${sides.length>4?'many':''}">${cards}</div>
@@ -629,6 +763,8 @@ function vGame(){
     const w=G.players.find(q=>q.id==G.winner),ws=w?mates(w):[],sc=SCORING(G.mode),po=POINTS(G.mode),lgs=x&&(G.opts.legs>1||sets);
     h+=`<div class="ov"><div class="card"><div class="trophy">${w?'🏆':'✅'}</div><h2>${w?(tms?'Team '+'AB'[w.team]+' – ':'')+ws.map(q=>esc(q.name)).join(' &amp; ')+(ws.length>1?' gewinnen!':' gewinnt!'):G.mode=='bob'?'Spiel beendet':'Training gespeichert'}</h2>
     <table><tr><th>Spieler</th>${sc?'<th class="n">Ø</th><th class="n">Beste</th>':''}${po?'<th class="n">Punkte</th>':''}<th class="n">Darts</th>${sets?'<th class="n">Sets</th>':''}${lgs?'<th class="n">Legs</th>':''}</tr>${G.players.map(q=>`<tr><td>${esc(q.name)}</td>${sc?`<td class="n">${num(q.tDarts?q.sum/q.tDarts*3:NaN)}</td><td class="n">${q.best}</td>`:''}${po?`<td class="n">${G.mode=='cricket'?q.pts:q.score}</td>`:''}<td class="n">${q.tDarts}</td>${sets?`<td class="n">${q.sets}</td>`:''}${lgs?`<td class="n">${q.lw}</td>`:''}</tr>`).join('')}</table>
+    ${G.news.length?'<div class="news"><b>⭐ Neue Bestleistungen</b>'+G.news.map(t=>'<div>'+esc(t)+'</div>').join('')+'</div>':''}
+    ${Object.keys(G.badges).length?'<div class="news"><b>🏅 Neue Auszeichnungen</b>'+G.players.filter(q=>G.badges[q.id]).map(q=>'<div>'+esc(q.name)+': '+G.badges[q.id].map(k=>{const b=BADGES.find(b=>b[0]==k);return b[1]+' '+b[2]}).join(' · ')+'</div>').join('')+'</div>':''}
     <div class="row" style="justify-content:center;margin-top:18px"><button class="btn pri" data-act="rematch">Revanche</button><button class="btn" data-act="menu">Zum Menü</button><button class="btn sm" data-act="undo">↶ Letzte Aufnahme korrigieren</button></div></div></div>`;
   }
   return h;
@@ -651,7 +787,7 @@ function playerGrid(all){
   for(const{p,s}of all){
     h+=`<div class="card" style="--c:${p.color};margin:0"><div class="ph"><div class="av">${esc(p.name[0].toUpperCase())}</div><h2>${esc(p.name)}</h2><input type="color" value="${p.color}" data-id="${p.id}" title="Farbe"></div><div class="st">`+
       tile('Spiele',s.games)+tile('Siegquote',pct(s.wins,s.mg))+tile('Ø 3 Darts',num(s.avg))+tile('Doppelquote',pct(s.dHit,s.dTry))+
-      `</div><div class="row" style="margin-top:12px"><button class="btn pri sm" style="flex:1" data-act="player" data-id="${p.id}">Statistik ansehen</button><button class="btn sm" data-act="ren" data-id="${p.id}" title="Umbenennen">✎</button><button class="btn sm dan" data-act="delp" data-id="${p.id}" title="Löschen">🗑</button></div></div>`;
+      `</div><p class="mute small" style="margin:10px 0 0">🏅 ${badgeIds(s).length} von ${BADGES.length} Auszeichnungen</p><div class="row" style="margin-top:10px"><button class="btn pri sm" style="flex:1" data-act="player" data-id="${p.id}">Statistik ansehen</button><button class="btn sm" data-act="ren" data-id="${p.id}" title="Umbenennen">✎</button><button class="btn sm dan" data-act="delp" data-id="${p.id}" title="Löschen">🗑</button></div></div>`;
   }
   return h+'</div>';
 }
@@ -725,6 +861,8 @@ function vPlayer(){
     tile('Überworfen',s.busts,'X01-Aufnahmen')+tile('Daneben',s.all?num(s.miss/s.all*100)+' %':'–',s.all+' Darts gesamt')+
     tile('Schnellster Sieg',s.fast?dur(s.fast.dur):'–',s.fast?s.fast.l:'')+
     (s.bob!=null?tile("Bob's 27 Bestwert",s.bob):'')+(s.sh!=null?tile('Shanghai Bestwert',s.sh):'')+'</div></div>';
+  const got=badgeIds(s);
+  h+='<div class="card"><h2>Auszeichnungen <span class="mute small">'+got.length+' von '+BADGES.length+(rng?' · im gewählten Zeitraum':'')+'</span></h2><div class="badges">'+BADGES.filter(b=>got.includes(b[0])).concat(BADGES.filter(b=>!got.includes(b[0]))).map(b=>badgeHTML(b,got.includes(b[0]))).join('')+'</div></div>';
   h+='<div class="grid2"><div class="card"><h2>Average pro Spiel (X01)</h2>'+trendSVG(s.trend)+'</div>';
   h+='<div class="card"><h2>Aufnahmen nach Punktzahl</h2>'+(s.nTurns?'<div class="bars">'+DIST.map((d,i)=>`<span>${d[0]}</span><div class="bar" data-tip="${d[0]}: ${s.dist[i]} Aufnahmen"><i class="${s.dist[i]?'':'z'}" style="width:${s.dist[i]/Math.max(...s.dist)*100}%"></i></div><span>${s.dist[i]} · ${pct(s.dist[i],s.nTurns)}</span>`).join('')+'</div><p class="mute small" style="margin:10px 0 0">'+s.nTurns+' Aufnahmen aus X01 und Training</p>':'<p class="mute small">Noch keine X01- oder Trainings-Aufnahmen.</p>')+'</div>';
   h+='<div class="card"><h2>Treffer-Heatmap</h2>'+(s.all-s.miss?'<div class="heat">'+boardSVG({heat:s.seg})+'</div><div class="legend">selten<i></i>häufig</div><p class="mute small" style="text-align:center;margin:8px 0 0">Top-Felder: '+s.topHits.map(([k,v])=>k+' ('+v+'×)').join(' · ')+'</p>':'<p class="mute small">Noch keine Treffer erfasst.</p>')+'</div>';
@@ -820,8 +958,8 @@ const acts={
   addp:addPlayer,
   start:newGame,
   miss:()=>throwDart({s:0,m:0}),
-  edit:e=>{const i=+e.dataset.i;if(!G||G.done||i>=G.turn.length)return;editIdx=editIdx===i?null:i;render()},
-  confirm:confirmTurn,
+  edit:e=>{const i=+e.dataset.i;if(!G||G.done||i>=G.turn.length||G.players[G.cur].bot)return;editIdx=editIdx===i?null:i;render()},
+  confirm:()=>confirmTurn(),
   undo:undo,
   endtrain:endTraining,
   abort:()=>{if(confirm('Laufendes Spiel verwerfen? Es wird nicht gespeichert.')){G=null;hist=[];editIdx=null;saveG();render()}},
