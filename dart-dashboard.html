@@ -120,6 +120,21 @@ tr.click{cursor:pointer}
 .news{text-align:left;background:var(--panel2);border-radius:12px;padding:10px 14px;margin-top:12px;font-size:14px}
 .news b{color:var(--gold)}
 .news div{margin-top:4px}
+/* ---------- Lexikon ---------- */
+.demo{display:grid;grid-template-columns:minmax(220px,360px) 1fr;gap:18px;align-items:center}
+.demo svg{width:100%;height:auto;display:block}
+.demo .dbig{font-size:34px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1}
+.demo .dcap{font-size:17px;line-height:1.45;min-height:5.8em;margin:10px 0}
+.demo .dots{display:flex;gap:5px;margin-bottom:12px}
+.demo .dots i{flex:1;max-width:28px;height:5px;border-radius:3px;background:var(--line)}
+.demo .dots i.on{background:var(--acc)}
+@media(max-width:640px){.demo{grid-template-columns:1fr}}
+.lex p{line-height:1.5;margin:0 0 10px}
+.lex ul{margin:0 0 10px;padding-left:20px;line-height:1.5}
+dl.gl{margin:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px}
+dl.gl div{background:var(--panel2);border-radius:12px;padding:10px 12px}
+dl.gl dt{font-weight:700}
+dl.gl dd{margin:2px 0 0;color:var(--mute);font-size:14px;line-height:1.4}
 @media (min-width:820px) and (orientation:landscape){
   main.g{padding:8px 10px;max-width:none}
   .game{display:grid;grid-template-columns:minmax(300px,1fr) auto;gap:10px;height:calc(100dvh - 74px);min-height:420px}
@@ -202,7 +217,7 @@ const $=s=>document.querySelector(s);
 const num=(x,d=1)=>isFinite(x)?x.toFixed(d).replace('.',','):'–';
 const pct=(a,b)=>b?Math.round(a/b*100)+' %':'–';
 function toast(t,ms=2600){const e=$('#toast');e.textContent=t;e.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('on'),ms)}
-const lab=t=>!t.m?'Miss':t.s==25?(t.m==2?'Bull':'25'):'SDT'[t.m-1]+t.s;
+const lab=t=>!t.m?(t.o?'Aus '+t.o:'Miss'):t.s==25?(t.m==2?'Bull':'25'):'SDT'[t.m-1]+t.s;
 const MODES={x01:'X01',cricket:'Cricket',atc:'Around the Clock',shanghai:'Shanghai',bob:"Bob's 27",train:'Training'};
 const OUTS={single:'Single Out',double:'Double Out',master:'Master Out'};
 function modeLabel(m){
@@ -383,12 +398,13 @@ function confirmTurn(fromBot){
     pbSay();return;
   }
   // Danach: wer ist dran – mit Rest, sobald ein Finish möglich ist
-  const n=G.players[G.cur],multi=G.players.length>1;
+  // Der Name wird nur ab drei Spielern genannt – zu zweit ist klar, wer dran ist
+  const n=G.players[G.cur],cnt=G.players.length;
   const next=()=>{
-    if(G.mode=='x01'&&n.in&&n.score<=170&&canFinish(n.score,G.opts.out))say(sn(n)+', '+n.score+' Rest');
-    else if(multi)say(sn(n));
+    if(G.mode=='x01'&&n.in&&n.score<=170&&canFinish(n.score,G.opts.out))say((cnt>2?sn(n)+', ':'')+n.score+' Rest');
+    else if(cnt>2)say(sn(n));
   };
-  if(pd.win){fx('win');say('Game shot! Leg für '+(p.team!=null?'Team '+'AB'[p.team]:sn(p)),1);pbSay();if(multi)say(sn(n)+' beginnt')}
+  if(pd.win){fx('win');say('Game shot! Leg für '+(p.team!=null?'Team '+'AB'[p.team]:sn(p)),1);pbSay();if(cnt>1)say(sn(n)+' beginnt')}
   else if(pd.bust){fx('bust');say('Überworfen',1);next()}
   else{
     if(sc==180)fx('max');
@@ -435,8 +451,9 @@ function botHit(aim,sd){
   let i=1;while(i<7&&r>REAL[i])i++;
   const rd=Math.min(206,SHOWN[i-1]+(SHOWN[i]-SHOWN[i-1])*(r-REAL[i-1])/(REAL[i]-REAL[i-1])),k=r?rd/r:0;
   const t={x:+(x*k).toFixed(1),y:+(y*k).toFixed(1)};
-  if(r<=6.35){t.s=25;t.m=2}else if(r<=15.9){t.s=25;t.m=1}else if(r>170){t.s=0;t.m=0}
-  else{t.s=ORD[Math.floor(((Math.atan2(x,-y)*180/Math.PI+369)%360)/18)];t.m=r>=162?2:r>=99&&r<=107?3:1}
+  const sct=ORD[Math.floor(((Math.atan2(x,-y)*180/Math.PI+369)%360)/18)];
+  if(r<=6.35){t.s=25;t.m=2}else if(r<=15.9){t.s=25;t.m=1}else if(r>170){t.s=0;t.m=0;if(r<=225)t.o=sct}
+  else{t.s=sct;t.m=r>=162?2:r>=99&&r<=107?3:1}
   return t;
 }
 function botTick(){
@@ -451,7 +468,7 @@ function turnScore(p,bust){
 }
 function endTurn(bust,win){
   const p=G.players[G.cur],sc=turnScore(p,bust);
-  G.turns.push({p:p.id,leg:G.leg,d:G.turn.map(t=>[t.s,t.m]),sc,bust:bust?1:0});
+  G.turns.push({p:p.id,leg:G.leg,d:G.turn.map(t=>t.o?[0,0,t.o]:[t.s,t.m]),sc,bust:bust?1:0});   // [0,0,n] = ins Aus beim Feld n
   p.last={d:G.turn.map(lab),sc,bust};p.sum+=sc;p.tDarts+=G.turn.length;if(sc>p.best)p.best=sc;
   G.turn=[];G.pending=null;
   pbCheck(p,sc,win);
@@ -537,13 +554,15 @@ function boardSVG(o={}){
   let h=`<svg class="board${live?' live':''}" viewBox="-212 -212 424 424"${live?' id="board"':''}><circle r="212" fill="#06080b" data-s="0" data-m="0"/><circle r="184" fill="#111" data-s="0" data-m="0"/>`,top='';
   ORD.forEach((n,i)=>{
     const a1=(i*18-9)*Math.PI/180,a2=(i*18+9)*Math.PI/180;
+    // Außenring: Dart ins Aus bei diesem Feld
+    h+=`<path class="f" d="${sec(182,212,a1,a2)}" fill="${heat?hc('o',n):'#06080b'}" stroke="${heat?'#0b0e13':'#06080b'}" stroke-width="${heat?1.5:.6}" data-s="0" data-m="0" data-o="${n}"${heat?` data-tip="Aus bei ${n}: ${heat['o_'+n]||0}×"`:''}/>`;
     for(const[r1,r2,m]of RINGS){
       const fill=heat?hc(n,m):m==1?(i%2?'#e9dfc3':'#1b1b1b'):(i%2?'#15803d':'#c62828'),d=sec(r1,r2,a1,a2);
       h+=`<path class="f" d="${d}" fill="${fill}" stroke="${heat?'#0b0e13':'#555'}" stroke-width="${heat?1.5:.6}" data-s="${n}" data-m="${m}"${tip(n,m)}/>`;
       if(hl&&hl(n,m))top+=`<path d="${d}" fill="rgba(251,191,36,.35)" stroke="#fbbf24" stroke-width="3" pointer-events="none"/>`;
     }
     const a=i*18*Math.PI/180;
-    h+=`<text x="${(197*Math.sin(a)).toFixed(1)}" y="${(-197*Math.cos(a)+6.5).toFixed(1)}" fill="#ddd" font-size="19" font-weight="700" text-anchor="middle" pointer-events="none">${n}</text>`;
+    h+=`<text x="${(197*Math.sin(a)).toFixed(1)}" y="${(-197*Math.cos(a)+6.5).toFixed(1)}" fill="#ddd" stroke="#06080b" stroke-width="3" paint-order="stroke" font-size="19" font-weight="700" text-anchor="middle" pointer-events="none">${n}</text>`;
   });
   h+=`<circle class="f" r="${RO}" fill="${heat?hc(25,1):'#15803d'}" stroke="${heat?'#0b0e13':'#555'}" stroke-width="${heat?1.5:.6}" data-s="25" data-m="1"${tip(25,1)}/><circle class="f" r="${RB}" fill="${heat?hc(25,2):'#c62828'}" stroke="${heat?'#0b0e13':'#555'}" stroke-width="${heat?1.5:.6}" data-s="25" data-m="2"${tip(25,2)}/>`;
   if(hl&&hl(25,1))top+=`<circle r="${RO}" fill="none" stroke="#fbbf24" stroke-width="3" pointer-events="none"/>`;
@@ -557,7 +576,7 @@ const DIST=[['0–39',0,39],['40–59',40,59],['60–79',60,79],['80–99',80,99
 function stats(pid,days=0){
   const since=days?Date.now()-days*864e5:0;
   const s={games:0,mg:0,wins:0,pts:0,darts:0,best:0,freq:{},c180:0,c140:0,c100:0,co:0,short:{},hits:{},seg:{},miss:0,all:0,f9p:0,f9d:0,fast:null,modes:{},
-    trend:[],dist:DIST.map(()=>0),nTurns:0,coTry:0,coHit:0,legsP:0,legsW:0,wDarts:0,h2h:{},bob:null,sh:null,busts:0,dbl:{},dTry:0,dHit:0,streak:0,bestAvg:0,wl:0,coBull:0,shInst:0,botMax:0};
+    trend:[],dist:DIST.map(()=>0),nTurns:0,coTry:0,coHit:0,legsP:0,legsW:0,wDarts:0,h2h:{},bob:null,sh:null,busts:0,dbl:{},dTry:0,dHit:0,streak:0,bestAvg:0,wl:0,coBull:0,shInst:0,botMax:0,outs:{},outN:0};
   let cs=0;
   for(const m of db.matches){
     if(m.date<since||!m.players.some(p=>p.id==pid))continue;
@@ -580,7 +599,7 @@ function stats(pid,days=0){
       if(t.p!=pid){if(x&&t.d.some(d=>d[1]==2))inn[k]=1;continue}
       lastT=t;
       if(x&&!t.bust&&t.sc>0&&r-t.sc==0){const l=t.d[t.d.length-1];if(l[0]==25&&l[1]==2)s.coBull++}
-      for(const[n,mu]of t.d){s.all++;if(!mu)s.miss++;else{const k=lab({s:n,m:mu});s.hits[k]=(s.hits[k]||0)+1;s.seg[n+'_'+mu]=(s.seg[n+'_'+mu]||0)+1}}
+      for(const[n,mu,o]of t.d){s.all++;if(!mu){s.miss++;if(o){s.outs[o]=(s.outs[o]||0)+1;s.outN++}}else{const k=lab({s:n,m:mu});s.hits[k]=(s.hits[k]||0)+1;s.seg[n+'_'+mu]=(s.seg[n+'_'+mu]||0)+1}}
       if(!sc)continue;
       s.pts+=t.sc;s.darts+=t.d.length;mp+=t.sc;md+=t.d.length;if(t.sc>s.best)s.best=t.sc;
       if(!t.bust&&t.d.length==3)s.freq[t.sc]=(s.freq[t.sc]||0)+1;
@@ -672,10 +691,11 @@ function trendSVG(tr){
 /* ================= Ansichten ================= */
 function render(){
   const tab=view=='player'?'players':view=='match'?'history':view;
-  $('#nav').innerHTML=[['play','Spiel'],['players','Spieler'],['records','Rekorde'],['history','Verlauf'],['data','Einstellungen']].map(([k,l])=>`<button data-act="nav" data-v="${k}" class="${tab==k?'on':''}">${l}</button>`).join('');
+  $('#nav').innerHTML=[['play','Spiel'],['players','Spieler'],['records','Rekorde'],['history','Verlauf'],['lex','Lexikon'],['data','Einstellungen']].map(([k,l])=>`<button data-act="nav" data-v="${k}" class="${tab==k?'on':''}">${l}</button>`).join('');
   const app=$('#app');app.className=view=='play'&&G?'g':'';
   app.innerHTML=(storageOk?'':'<div class="card" style="border-color:var(--red)">⚠️ Der Browser erlaubt hier kein Speichern. Bitte Daten nach dem Spielen über „Daten“ exportieren.</div>')+
-    (view=='play'?(G?vGame():vSetup()):view=='players'?vPlayers():view=='player'?vPlayer():view=='records'?vRecords():view=='history'?vHistory():view=='match'?vMatch():vData());
+    (view=='play'?(G?vGame():vSetup()):view=='players'?vPlayers():view=='player'?vPlayer():view=='records'?vRecords():view=='history'?vHistory():view=='match'?vMatch():view=='lex'?vLex():vData());
+  lexTimer();
   wake();botTick();
 }
 const seg=(k,arr)=>'<div class="seg">'+arr.map(([v,l])=>`<button data-act="set" data-k="${k}" data-v='${JSON.stringify(v)}' class="${db.setup[k]===v?'on':''}">${l}</button>`).join('')+'</div>';
@@ -754,7 +774,7 @@ function vGame(){
   <div class="info"><span><b>${esc(modeLabel(G))}</b>${sets?' · Set '+G.set:''}${x&&(G.opts.legs>1||sets)?' · Leg '+G.leg:''}${G.mode=='bob'||G.mode=='shanghai'?' · Runde '+G.round:''}</span><span>Am Wurf: <b style="color:${p.color}">${esc(p.name)}</b></span></div>
   <div class="pcards n${sides.length} ${sides.length>4?'many':''}">${cards}</div>
   <div class="turn"><div class="slots">${slots}</div>${conf}</div>
-  <div class="ctl"><button class="btn" data-act="miss">✕ Daneben (0)</button><button class="btn" data-act="undo">↶ Rückgängig</button></div>
+  <div class="ctl"><button class="btn" data-act="miss">✕ Komplett daneben</button><button class="btn" data-act="undo">↶ Rückgängig</button></div>
   <div class="ctl2"><span class="row"><button class="btn sm ${db.cfg.voice?'on':'off'}" data-act="tog" data-k="voice">🗣 Ansage</button><button class="btn sm ${db.cfg.sound?'on':'off'}" data-act="tog" data-k="sound">🔔 Töne</button></span><span class="row">${G.mode=='train'?'<button class="btn pri sm" data-act="endtrain">✓ Training speichern</button>':''}<button class="btn dan sm" data-act="abort">Abbrechen</button></span></div>
   </div>
   <div class="boardwrap ${lock?'dim':''}">${boardSVG({hl,live:true,marks:G.turn})}${lock?'<div class="lock">Aufnahme vollständig –<br>bitte links bestätigen</div>':''}</div>
@@ -836,7 +856,7 @@ function vMatch(){
     }
     const k=leg+'|'+side[t.p],rk=leg+'|'+t.p;rd[rk]=(rd[rk]||0)+1;
     let r='';if(x){r=(rest[k]??o.start)-t.sc;rest[k]=r}
-    h+=`<tr><td>${rd[rk]}</td><td>${esc(nm(t.p))}</td><td>${t.d.map(d=>lab({s:d[0],m:d[1]})).join(' · ')}</td><td class="n">${t.bust?'<span style="color:var(--red)">überworfen</span>':'<b>'+t.sc+'</b>'}</td>${x?'<td class="n">'+r+'</td>':''}</tr>`;
+    h+=`<tr><td>${rd[rk]}</td><td>${esc(nm(t.p))}</td><td>${t.d.map(d=>lab({s:d[0],m:d[1],o:d[2]})).join(' · ')}</td><td class="n">${t.bust?'<span style="color:var(--red)">überworfen</span>':'<b>'+t.sc+'</b>'}</td>${x?'<td class="n">'+r+'</td>':''}</tr>`;
   }
   return h+(leg?'</table>':'<p class="mute">Keine Aufnahmen gespeichert.</p>')+'</div></div>';
 }
@@ -858,19 +878,132 @@ function vPlayer(){
     tile('Kürzestes Leg',s.shortTxt||'–')+
     tile('Höchste Aufnahme',s.best||'–')+tile('Häufigste Aufnahme',s.topFreq?s.topFreq[0]:'–',s.topFreq?s.topFreq[1]+'× geworfen':'')+
     tile('180er',s.c180)+tile('140+ / 100+',s.c140+' / '+s.c100)+
-    tile('Überworfen',s.busts,'X01-Aufnahmen')+tile('Daneben',s.all?num(s.miss/s.all*100)+' %':'–',s.all+' Darts gesamt')+
+    tile('Überworfen',s.busts,'X01-Aufnahmen')+tile('Ohne Punkte',s.all?num(s.miss/s.all*100)+' %':'–',s.outN+' ins Aus · '+(s.miss-s.outN)+' daneben · '+s.all+' Darts')+
     tile('Schnellster Sieg',s.fast?dur(s.fast.dur):'–',s.fast?s.fast.l:'')+
     (s.bob!=null?tile("Bob's 27 Bestwert",s.bob):'')+(s.sh!=null?tile('Shanghai Bestwert',s.sh):'')+'</div></div>';
   const got=badgeIds(s);
   h+='<div class="card"><h2>Auszeichnungen <span class="mute small">'+got.length+' von '+BADGES.length+(rng?' · im gewählten Zeitraum':'')+'</span></h2><div class="badges">'+BADGES.filter(b=>got.includes(b[0])).concat(BADGES.filter(b=>!got.includes(b[0]))).map(b=>badgeHTML(b,got.includes(b[0]))).join('')+'</div></div>';
   h+='<div class="grid2"><div class="card"><h2>Average pro Spiel (X01)</h2>'+trendSVG(s.trend)+'</div>';
   h+='<div class="card"><h2>Aufnahmen nach Punktzahl</h2>'+(s.nTurns?'<div class="bars">'+DIST.map((d,i)=>`<span>${d[0]}</span><div class="bar" data-tip="${d[0]}: ${s.dist[i]} Aufnahmen"><i class="${s.dist[i]?'':'z'}" style="width:${s.dist[i]/Math.max(...s.dist)*100}%"></i></div><span>${s.dist[i]} · ${pct(s.dist[i],s.nTurns)}</span>`).join('')+'</div><p class="mute small" style="margin:10px 0 0">'+s.nTurns+' Aufnahmen aus X01 und Training</p>':'<p class="mute small">Noch keine X01- oder Trainings-Aufnahmen.</p>')+'</div>';
-  h+='<div class="card"><h2>Treffer-Heatmap</h2>'+(s.all-s.miss?'<div class="heat">'+boardSVG({heat:s.seg})+'</div><div class="legend">selten<i></i>häufig</div><p class="mute small" style="text-align:center;margin:8px 0 0">Top-Felder: '+s.topHits.map(([k,v])=>k+' ('+v+'×)').join(' · ')+'</p>':'<p class="mute small">Noch keine Treffer erfasst.</p>')+'</div>';
+  h+='<div class="card"><h2>Treffer-Heatmap</h2>'+(s.all-s.miss+s.outN?'<div class="heat">'+boardSVG({heat:Object.assign({},s.seg,Object.fromEntries(Object.entries(s.outs).map(([k,v])=>['o_'+k,v])))})+'</div><div class="legend">selten<i></i>häufig</div><p class="mute small" style="text-align:center;margin:8px 0 0">Top-Felder: '+(s.topHits.map(([k,v])=>k+' ('+v+'×)').join(' · ')||'–')+'</p><p class="mute small" style="text-align:center;margin:4px 0 0">'+(s.outN?'Am häufigsten ins Aus: '+Object.entries(s.outs).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>'bei der '+k+' ('+v+'×)').join(' · '):'Der äußere Ring zeigt Darts ins Aus: dafür im Spiel außen neben das Feld tippen.')+'</p>':'<p class="mute small">Noch keine Treffer erfasst.</p>')+'</div>';
   const dd=Object.entries(s.dbl).sort((a,b)=>b[1][0]-a[1][0]);
   h+='<div class="card"><h2>Checkout-Tabelle: Quote je Doppel</h2>'+(dd.length?'<div class="bars">'+dd.map(([f,[a,k]])=>`<span><b>${f==25?'Bull':'D'+f}</b></span><div class="bar" data-tip="${f==25?'Bull':'D'+f}: ${k} Treffer bei ${a} Darts"><i class="${k?'':'z'}" style="width:${k/a*100}%"></i></div><span>${k} / ${a} · ${pct(k,a)}</span>`).join('')+'</div><p class="mute small" style="margin:10px 0 0">Gezählt wird jeder Dart, bei dem der Rest direkt mit diesem Doppel zu checken war (Double und Master Out). Sortiert nach Anzahl der Versuche.</p>':'<p class="mute small">Noch keine Darts aufs Doppel erfasst. Dafür braucht es X01-Spiele mit Double oder Master Out.</p>')+'</div>';
   const hh=Object.values(s.h2h).sort((a,b)=>b.g-a.g);
   h+='<div class="card"><h2>Direkter Vergleich</h2>'+(hh.length?'<table><tr><th>Gegner</th><th class="n">Spiele</th><th class="n">Siege</th><th class="n">Niederlagen</th><th class="n">Quote</th></tr>'+hh.map(o=>`<tr><td>${esc(o.name)}</td><td class="n">${o.g}</td><td class="n">${o.w}</td><td class="n">${o.l}</td><td class="n">${pct(o.w,o.g)}</td></tr>`).join('')+'</table><p class="mute small" style="margin:8px 0 0">Niederlage = der Gegner hat das Spiel gewonnen. Bei mehr als zwei Spielern kann auch ein Dritter gewinnen.</p>':'<p class="mute small">Noch keine Spiele gegen andere Spieler.</p>')+'</div></div>';
   return h;
+}
+/* ================= Lexikon ================= */
+/* Animierte Beispiele: jeder Schritt ist ein Dart (d=[Feld,Multiplikator,Aus-Feld]) oder nur ein Erklärtext.
+   nt = neue Aufnahme (Marker löschen), hl = Zielfeld [Feld,Multiplikator], hn = ganzes Zahlenfeld markieren */
+const DEMOS={
+ x01:{name:'X01 (301, 501 …)',text:'<p>Der Klassiker. Alle starten mit derselben Punktzahl, zum Beispiel 501. Jede Aufnahme wird abgezogen. Wer zuerst <b>genau</b> auf 0 kommt, gewinnt das Leg.</p><ul><li><b>Double Out:</b> Der letzte Dart muss ein Doppelfeld (oder das Bullseye) treffen.</li><li><b>Master Out:</b> Der letzte Dart muss ein Doppel oder Triple sein.</li><li><b>Single Out:</b> Jedes Feld darf das Spiel beenden.</li><li><b>Double In:</b> Die Punkte zählen erst, nachdem ein Doppel getroffen wurde.</li><li><b>Überworfen:</b> Mehr Punkte als der Rest, Rest 1 bei Double Out oder Null ohne Doppel – die ganze Aufnahme zählt nicht.</li></ul>',
+  steps:[{big:'501',cap:'Alle starten bei 501 Punkten. Wer zuerst genau auf 0 kommt, gewinnt das Leg.'},
+   {d:[20,3],big:'441',cap:'Triple 20 zählt 3 × 20 = 60. Die Punkte werden vom Rest abgezogen.'},
+   {d:[20,1],big:'421',cap:'Single 20: weitere 20 Punkte weniger.'},
+   {d:[5,1],big:'416',cap:'Knapp daneben in die 5. Nach drei Darts ist die Aufnahme vorbei: 85 Punkte, der Nächste ist dran.'},
+   {nt:1,big:'56',cap:'Später im Leg: 56 Rest. Bei „Double Out“ muss der letzte Dart ein Doppelfeld treffen.'},
+   {d:[16,1],big:'40',hl:[20,2],cap:'Single 16 stellt 40 Rest. Das lässt sich mit der Doppel 20 checken.'},
+   {d:[20,2],big:'0',cap:'Doppel 20 = 40. Genau auf 0 mit einem Doppel: Game Shot, das Leg ist gewonnen!'},
+   {nt:1,big:'32',hl:[16,2],cap:'Anderes Beispiel: 32 Rest, das Ziel ist die Doppel 16.'},
+   {d:[16,3],big:'32',cap:'Der Dart landet in der Triple 16 = 48. Das ist mehr als der Rest: überworfen. Die Aufnahme zählt nicht, es bleibt bei 32.'}]},
+ cricket:{name:'Cricket',text:'<p>Es zählen nur die Felder <b>15 bis 20 und das Bull</b>. Jedes Feld muss dreimal getroffen werden, dann ist es „zu“. Ein Doppel zählt als zwei, ein Triple als drei Treffer.</p><p>Wer ein Feld zu hat, bekommt für weitere Treffer darauf Punkte – aber nur, solange mindestens ein Gegner das Feld noch offen hat. Es gewinnt, wer alle Felder zu hat und dabei mindestens so viele Punkte wie die Gegner.</p>',
+  steps:[{big:'15 – 20 und Bull',cap:'Nur diese sieben Felder zählen. Jedes muss dreimal getroffen werden.'},
+   {d:[20,1],big:'20: /',cap:'Ein Treffer auf die 20: ein Strich.'},
+   {d:[20,2],big:'20: ⦻ zu',cap:'Ein Doppel zählt als zwei Treffer. Die 20 ist damit dreimal getroffen und zu.'},
+   {d:[20,3],big:'60 Punkte',cap:'Weitere Treffer auf ein eigenes geschlossenes Feld bringen Punkte, solange ein Gegner es offen hat. Triple 20 = 60.'},
+   {nt:1,d:[19,3],big:'19: ⦻ zu',cap:'Ein Triple schließt ein Feld mit einem einzigen Dart.'},
+   {d:[3,1],big:'kein Treffer',cap:'Felder unter 15 zählen im Cricket nicht.'},
+   {d:[25,2],big:'Bull: ✕',cap:'Das Bull gehört dazu: der grüne Ring ist ein Treffer, das rote Bullseye zwei.'},
+   {nt:1,big:'Sieg',cap:'Es gewinnt, wer zuerst alle Felder zu hat und mindestens so viele Punkte wie die Gegner.'}]},
+ atc:{name:'Around the Clock',text:'<p>Einmal rund um die Uhr: Die Felder <b>1 bis 20</b> müssen der Reihe nach getroffen werden. Single, Double und Triple zählen gleich. Wer zuerst die 20 trifft, gewinnt – auf Wunsch kommt danach noch das Bull.</p><p>Ideal für Einsteiger, weil man die ganze Scheibe kennenlernt.</p>',
+  steps:[{big:'Ziel: 1',hn:1,cap:'Alle beginnen bei der 1.'},
+   {d:[1,1],big:'Ziel: 2',hn:2,cap:'Die 1 ist getroffen, weiter zur 2.'},
+   {d:[15,1],big:'Ziel: 2',hn:2,cap:'Falsches Feld: zählt nicht, das Ziel bleibt die 2.'},
+   {d:[2,3],big:'Ziel: 3',hn:3,cap:'Getroffen. Ein Triple zählt hier genauso wie ein Single. Weiter zur 3 – bis zur 20.'}]},
+ shanghai:{name:'Shanghai',text:'<p>Gespielt wird in Runden. In <b>Runde 1 zählt nur die 1</b>, in Runde 2 nur die 2 und so weiter. Treffer zählen ihren normalen Wert (Double doppelt, Triple dreifach). Nach der letzten Runde gewinnt die höchste Summe.</p><p>Wer in einer Aufnahme Single, Double und Triple des aktuellen Feldes trifft, hat ein <b>Shanghai</b> und gewinnt sofort.</p>',
+  steps:[{big:'Runde 1 · 0',hn:1,cap:'In Runde 1 zählt nur das Feld 1.'},
+   {d:[1,1],big:'Runde 1 · 1',hn:1,cap:'Single 1 = 1 Punkt.'},
+   {d:[20,1],big:'Runde 1 · 1',hn:1,cap:'Die 20 ist in dieser Runde wertlos.'},
+   {d:[1,3],big:'Runde 1 · 4',hn:1,cap:'Triple 1 = 3 Punkte.'},
+   {nt:1,d:[2,1],big:'Runde 2 · 6',hn:2,cap:'Runde 2: Jetzt zählt nur die 2.'},
+   {d:[2,2],big:'Runde 2 · 10',hn:2,cap:'Doppel 2 dazu …'},
+   {d:[2,3],big:'Shanghai!',hn:2,cap:'… und die Triple 2. Single, Double und Triple desselben Feldes in einer Aufnahme: sofortiger Sieg.'}]},
+ bob:{name:"Bob's 27",text:'<p>Ein Doppel-Training, benannt nach dem Profi Bob Anderson. Alle starten mit <b>27 Punkten</b>. In Runde 1 wirft man drei Darts auf die Doppel 1, in Runde 2 auf die Doppel 2 – bis zur Doppel 20 und zum Bull.</p><p>Jeder Treffer bringt den Wert des Doppels. Eine Aufnahme ganz ohne Treffer kostet ihn. Wer auf 0 oder darunter fällt, scheidet aus.</p>',
+  steps:[{big:'27',hl:[1,2],cap:'Alle starten mit 27 Punkten. In Runde 1 ist die Doppel 1 das Ziel.'},
+   {d:[1,2],big:'29',hl:[1,2],cap:'Treffer! Die Doppel 1 bringt 2 Punkte.'},
+   {d:[1,1],big:'29',hl:[1,2],cap:'Nur Single: zählt nicht.'},
+   {d:[0,0,1],big:'29',hl:[1,2],cap:'Ins Aus. Weil ein Dart getroffen hat, bleibt es bei 29.'},
+   {nt:1,d:[17,1],big:'29',hl:[2,2],cap:'Runde 2: Das Ziel ist die Doppel 2 …'},
+   {d:[2,1],big:'29',hl:[2,2],cap:'… wieder kein Doppel …'},
+   {d:[0,0,2],big:'25',hl:[2,2],cap:'Drei Darts ohne Treffer kosten den Wert des Doppels: minus 4.'}]},
+ train:{name:'Training',text:'<p>Freies Werfen ohne Ziel und ohne Gegner. Jede Aufnahme wird gezählt und fließt in Average, Heatmap und Statistik ein. Über „Training speichern“ wird die Einheit beendet.</p>',steps:[]}
+};
+const RINGINFO={
+ s:['Single','Die großen Flächen zählen den einfachen Wert der Zahl am Rand.',(s,m)=>m==1&&s!=25],
+ d:['Double','Der schmale äußere Ring zählt doppelt. Doppel 20 = 40. In X01 mit Double Out muss hier der letzte Dart landen.',(s,m)=>m==2&&s!=25],
+ t:['Triple','Der schmale innere Ring zählt dreifach. Triple 20 = 60 ist das wertvollste Feld der Scheibe.',(s,m)=>m==3],
+ b:['Bull','Der grüne Ring in der Mitte zählt 25, das rote Bullseye 50. Das Bullseye gilt als Doppel.',(s)=>s==25]
+};
+const GLOSS=[
+ ['Aufnahme','Die drei Darts, die ein Spieler hintereinander wirft.'],
+ ['Aus','Ein Dart, der außerhalb des Doppelrings in der Scheibe steckt. Zählt 0. In der App außen neben das Feld tippen.'],
+ ['Ausbullen','Vor dem Spiel wirft jeder einen Dart aufs Bull. Wer näher dran ist, beginnt.'],
+ ['Average','Durchschnittliche Punktzahl pro Aufnahme (drei Darts). 40 ist solide für Hobbyspieler, Profis liegen bei 95 und mehr.'],
+ ['Big Fish','Das höchstmögliche Finish: 170 mit Triple 20, Triple 20 und Bullseye.'],
+ ['Bogey-Zahl','Ein Rest, der sich mit drei Darts nicht checken lässt: 169, 168, 166, 165, 163, 162 und 159.'],
+ ['Bull / Bullseye','Die Mitte der Scheibe. Der grüne Ring zählt 25 (Single Bull), der rote Punkt 50 (Bullseye).'],
+ ['Checkout / Finish','Das Beenden eines Legs, also der Wurf auf genau 0. Auch die dabei geworfene Punktzahl.'],
+ ['Checkout-Quote','In der App: Anteil der Aufnahmen mit Finish-Möglichkeit, in denen das Leg auch beendet wurde.'],
+ ['Doppelquote','Anteil der Darts aufs Doppel, die getroffen haben. Die wichtigste Kennzahl fürs Ausmachen.'],
+ ['Double In','Die Punkte zählen erst, nachdem ein Doppel getroffen wurde.'],
+ ['Double Out','Der letzte Dart eines Legs muss ein Doppelfeld oder das Bullseye treffen. Standard im Turnierdart.'],
+ ['First 9','Average der ersten drei Aufnahmen (neun Darts) eines Legs. Zeigt die reine Scoring-Stärke, ohne Würfe aufs Doppel.'],
+ ['Game Shot','Der Ausruf, wenn ein Leg oder das Spiel mit dem letzten Dart gewonnen wird.'],
+ ['High Finish','Ein Finish von 100 Punkten oder mehr.'],
+ ['Leg','Eine einzelne Runde, zum Beispiel einmal von 501 auf 0.'],
+ ['Madhouse','Die Doppel 1 – das letzte mögliche Doppel, wenn nur noch 2 Rest stehen.'],
+ ['Master Out','Der letzte Dart muss ein Doppel oder ein Triple sein.'],
+ ['Maximum','Die höchste Aufnahme: 180 mit drei Triple 20.'],
+ ['Oche','Die Abwurflinie. Sie liegt 2,37 m vor der Scheibe; das Bullseye hängt 1,73 m hoch.'],
+ ['Rest','Die Punkte, die ein Spieler im X01 noch bis zur Null braucht.'],
+ ['Robin Hood','Ein Dart, der im Schaft eines bereits steckenden Darts landet. Zählt nicht.'],
+ ['Set (Satz)','Mehrere Legs zusammengefasst. Wer die eingestellte Zahl an Legs gewinnt, holt den Satz.'],
+ ['Shanghai','Single, Double und Triple desselben Feldes in einer Aufnahme. Im gleichnamigen Spiel der sofortige Sieg.'],
+ ['Straight In','Die Punkte zählen ab dem ersten Dart, ohne Einstiegs-Doppel.'],
+ ['Ton','Eine Aufnahme von 100 Punkten oder mehr. „Ton 40“ sind 140, „Ton 80“ die 180.'],
+ ['Tops','Die Doppel 20 – ganz oben auf der Scheibe und das beliebteste Doppel.'],
+ ['Überworfen (Bust)','Mehr Punkte geworfen als der Rest erlaubt. Die Aufnahme zählt nicht, der Stand springt zurück.']
+];
+let lexMode='x01',lexStep=0,lexPlay=true,lexT=null,lexRing='t';
+function segPos(d){
+  if(d[0]==25)return d[1]==2?{x:0,y:0}:{x:17,y:-17};
+  const a=ORD.indexOf(d[1]?d[0]:d[2])*18*Math.PI/180,r=!d[1]?197:d[1]==3?105:d[1]==2?166:135;
+  return{x:+(r*Math.sin(a)).toFixed(1),y:+(-r*Math.cos(a)).toFixed(1)};
+}
+function demoHTML(){
+  const st=DEMOS[lexMode].steps;if(!st.length)return '';
+  const k=Math.min(lexStep,st.length-1),cur=st[k];let marks=[];
+  for(let i=0;i<=k;i++){if(st[i].nt)marks=[];if(st[i].d)marks.push(segPos(st[i].d))}
+  const hl=cur.hl?(s,m)=>s==cur.hl[0]&&m==cur.hl[1]:cur.hn?(s)=>s==cur.hn:null;
+  return `<div>${boardSVG({marks,hl})}</div><div><div class="dots">${st.map((_,i)=>`<i class="${i<=k?'on':''}"></i>`).join('')}</div>
+  <div class="dbig">${cur.big}</div><div class="dcap">${cur.cap}</div>
+  <div class="row"><button class="btn sm" data-act="lexgo" data-v="-1">◀ Zurück</button><button class="btn sm ${lexPlay?'on':''}" data-act="lexplay">${lexPlay?'⏸ Pause':'▶ Abspielen'}</button><button class="btn sm" data-act="lexgo" data-v="1">Weiter ▶</button></div></div>`;
+}
+function lexTimer(){
+  const want=view=='lex'&&lexPlay&&DEMOS[lexMode].steps.length>0;
+  if(!want&&lexT){clearInterval(lexT);lexT=null}
+  if(want&&!lexT)lexT=setInterval(()=>{
+    const e=document.getElementById('demo');if(view!='lex'||!e)return;
+    lexStep=(lexStep+1)%DEMOS[lexMode].steps.length;e.innerHTML=demoHTML();
+  },3200);
+}
+function vLex(){
+  const dm=DEMOS[lexMode],ri=RINGINFO[lexRing];
+  return `<div class="card lex"><h2>Spielmodi</h2><div class="seg sm">${Object.entries(DEMOS).map(([k,d])=>`<button data-act="lexm" data-v="${k}" class="${lexMode==k?'on':''}">${MODES[k]}</button>`).join('')}</div>
+  <h3>${dm.name}</h3>${dm.text}${dm.steps.length?'<h3>Beispiel Schritt für Schritt</h3><div class="demo" id="demo">'+demoHTML()+'</div>':''}</div>
+  <div class="card lex"><h2>Die Scheibe</h2><div class="demo"><div>${boardSVG({hl:ri[2]})}</div><div><div class="seg sm">${Object.entries(RINGINFO).map(([k,r])=>`<button data-act="lexring" data-v="${k}" class="${lexRing==k?'on':''}">${r[0]}</button>`).join('')}</div>
+  <div class="dcap"><b>${ri[0]}:</b> ${ri[1]}</div><p class="mute small">Die Zahl am Rand gibt den Wert des Feldes an. Steckt ein Dart außerhalb des Doppelrings, zählt er 0: In der App dafür außen neben das Feld tippen. „Komplett daneben“ ist für Darts, die die Scheibe verfehlen oder abprallen.</p></div></div></div>
+  <div class="card"><h2>Fachbegriffe</h2><dl class="gl">${GLOSS.map(([t,d])=>`<div><dt>${t}</dt><dd>${d}</dd></div>`).join('')}</dl></div>`;
 }
 function vHistory(){
   let h='<div class="card"><h2>Verlauf</h2>';
@@ -923,7 +1056,7 @@ function exportCSV(kind){
     for(const m of db.matches){const n=id=>(m.players.find(p=>p.id==id)||{}).name||'';rows.push([m.id,dt(m.date),modeLabel(m),m.players.map(p=>p.name+(p.team!=null?' [Team '+'AB'[p.team]+']':'')+(p.res!=null&&m.mode!='x01'&&m.mode!='train'?' ('+p.res+')':'')).join(', '),m.players.filter(p=>isWin(m,p)).map(p=>p.name).join(' & '),m.dur,(m.legs||[]).map(l=>n(l.w)+' ('+l.darts+' Darts)').join(', ')])}
   }else{
     rows=[['Spiel-ID','Datum','Modus','Leg','Spieler','Dart 1','Dart 2','Dart 3','Punkte','Überworfen']];
-    for(const m of db.matches)for(const t of m.turns){const L=i=>t.d[i]?lab({s:t.d[i][0],m:t.d[i][1]}):'';rows.push([m.id,dt(m.date),modeLabel(m),t.leg,(m.players.find(p=>p.id==t.p)||{}).name,L(0),L(1),L(2),t.sc,t.bust?'ja':''])}
+    for(const m of db.matches)for(const t of m.turns){const L=i=>t.d[i]?lab({s:t.d[i][0],m:t.d[i][1],o:t.d[i][2]}):'';rows.push([m.id,dt(m.date),modeLabel(m),t.leg,(m.players.find(p=>p.id==t.p)||{}).name,L(0),L(1),L(2),t.sc,t.bust?'ja':''])}
   }
   download('dart-'+({players:'spieler',matches:'spiele',turns:'wuerfe'}[kind])+'-'+stamp()+'.csv',csv(rows),'text/csv;charset=utf-8');
 }
@@ -972,6 +1105,10 @@ const acts={
     if(k=='sound'&&db.cfg.sound)fx('tick');
     render()},
   later:()=>{db.sinceBackup=5;save();render()},
+  lexm:e=>{lexMode=e.dataset.v;lexStep=0;lexPlay=true;render()},
+  lexring:e=>{lexRing=e.dataset.v;render()},
+  lexplay:()=>{lexPlay=!lexPlay;render()},
+  lexgo:e=>{const n=DEMOS[lexMode].steps.length;lexStep=(lexStep+ +e.dataset.v+n)%n;lexPlay=false;render()},
   rng:e=>{rng=+e.dataset.v;render()},
   full:()=>{const d=document;if(d.fullscreenElement)d.exitFullscreen();else if(d.documentElement.requestFullscreen)d.documentElement.requestFullscreen().catch(()=>toast('Vollbild wird hier nicht unterstützt'));else toast('Vollbild wird hier nicht unterstützt')},
   ren:e=>{const p=db.players.find(p=>p.id==e.dataset.id),n=prompt('Neuer Name',p.name);if(n&&n.trim()){p.name=n.trim().slice(0,20);save();render()}},
@@ -988,7 +1125,7 @@ document.addEventListener('click',e=>{
   if(b){
     const t=e.target;if(t.dataset.s===undefined||!G||G.done)return;
     const pt=b.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;const q=pt.matrixTransform(b.getScreenCTM().inverse());
-    throwDart({s:+t.dataset.s,m:+t.dataset.m,x:+q.x.toFixed(1),y:+q.y.toFixed(1)});return;
+    throwDart({s:+t.dataset.s,m:+t.dataset.m,o:t.dataset.o?+t.dataset.o:undefined,x:+q.x.toFixed(1),y:+q.y.toFixed(1)});return;
   }
   const a=e.target.closest('[data-act]');if(a&&acts[a.dataset.act])acts[a.dataset.act](a);
 });
