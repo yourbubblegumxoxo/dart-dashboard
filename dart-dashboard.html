@@ -120,6 +120,8 @@ tr.click{cursor:pointer}
 .news{text-align:left;background:var(--panel2);border-radius:12px;padding:10px 14px;margin-top:12px;font-size:14px}
 .news b{color:var(--gold)}
 .news div{margin-top:4px}
+.dlg>.btn{width:100%;min-height:60px;font-size:17px}
+.dlg h3{text-align:center}
 /* ---------- Lexikon ---------- */
 .demo{display:grid;grid-template-columns:minmax(220px,360px) 1fr;gap:18px;align-items:center}
 .demo svg{width:100%;height:auto;display:block}
@@ -208,7 +210,8 @@ db.setup=Object.assign({mode:'x01',start:501,in:'straight',out:'single',legs:1,s
 db.cfg=Object.assign({voice:true,sound:true,wake:true},db.cfg||{});
 if(db.sinceBackup==null)db.sinceBackup=db.matches.length;
 let G=lsGet(LSG), hist=[], view='play', editIdx=null, curP=null, curM=null, rng=0;
-if(G){G.news=G.news||[];G.pb=G.pb||{};G.badges=G.badges||{}}
+if(G){G.news=G.news||[];G.pb=G.pb||{};G.badges=G.badges||{};G.left=G.left||[]}
+let dlg=null,subOut=null,subIn=null;
 db.setup.bot=db.setup.bot||0;
 const save=()=>lsSet(LS,db), saveG=()=>lsSet(LSG,G);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
@@ -229,7 +232,9 @@ function modeLabel(m){
 }
 const SCORING=m=>m=='x01'||m=='train';          // Modi mit 3-Dart-Average
 const POINTS=m=>m=='shanghai'||m=='bob'||m=='cricket';
-const isWin=(m,p)=>m.winner!=null&&(m.winner==p.id||(p.team!=null&&p.team===m.wt));
+const isWin=(m,p)=>!p.left&&m.winner!=null&&(m.winner==p.id||(p.team!=null&&p.team===m.wt));
+/* Seite = Platz in der Wurfreihenfolge (bzw. Team): bleibt beim Auswechseln gleich, damit der Rest weiterläuft */
+const sideKey=p=>p.team!=null?'t'+p.team:p.slot!=null?'s'+p.slot:p.id;
 
 /* ================= Ton, Ansage, Bildschirm wach halten ================= */
 let AC=null,wl=null,wlBusy=false;
@@ -310,11 +315,14 @@ function newGame(){
   if(tm&&(list.length<4||list.length%2)){toast('Für Teams bitte 4, 6 oder 8 Spieler wählen (der Computer zählt mit)');return}
   const opts=s.mode=='x01'?{start:s.start,in:s.in,out:s.out,legs:s.legs,sets:s.sets,teams:tm}:s.mode=='cricket'?{teams:tm}:s.mode=='atc'?{bull:s.bull}:s.mode=='shanghai'?{rounds:s.rounds}:{};
   G={v:2,id:uid(),t0:Date.now(),mode:s.mode,opts,cur:0,starter:0,leg:1,set:1,round:1,turn:[],turns:[],legs:[],pending:null,done:false,winner:null,snap:null,
-     news:[],badges:{},pb:{},
+     news:[],badges:{},pb:{},left:[],
      players:list.map((p,i)=>({id:p.id,name:p.name,color:p.color,bot:p.bot||0,team:tm?i%2:null,legs:0,sets:0,lw:0,sum:0,tDarts:0,best:0,last:null,out:false}))};
   // Ausgangswerte für „neue Bestleistung“ und neue Auszeichnungen
-  for(const p of G.players)if(!p.bot){const t=stats(p.id);G.pb[p.id]={g:t.games,best:t.best,co:t.co,short:t.short[s.start]||0,avg:t.bestAvg,bob:t.bob,sh:t.sh,bd:badgeIds(t)}}
-  resetLeg();hist=[];editIdx=null;saveG();render();
+  for(const p of G.players)if(!p.bot)G.pb[p.id]=pbBase(p.id);
+  resetLeg();hist=[];editIdx=null;dlg=null;saveG();render();
+}
+function pbBase(id){
+  const t=stats(id);return{g:t.games,best:t.best,co:t.co,short:t.short[G.opts.start]||0,avg:t.bestAvg,bob:t.bob,sh:t.sh,bd:badgeIds(t)};
 }
 function resetLeg(){
   for(const p of G.players){
@@ -418,7 +426,7 @@ function pbCheck(p,sc,win){
   if(SCORING(G.mode)&&b.best>0&&sc>b.best){G.news.push(p.name+': höchste Aufnahme '+sc+' (bisher '+b.best+')');b.best=sc}
   if(win&&G.mode=='x01'){
     if(b.co>0&&sc>b.co){G.news.push(p.name+': höchstes Finish '+sc+' (bisher '+b.co+')');b.co=sc}
-    if(p.team==null&&b.short&&p.legDarts<b.short){G.news.push(p.name+': kürzestes Leg mit '+p.legDarts+' Darts (bisher '+b.short+')');b.short=p.legDarts}
+    if(p.team==null&&p.subLeg!=G.leg&&b.short&&p.legDarts<b.short){G.news.push(p.name+': kürzestes Leg mit '+p.legDarts+' Darts (bisher '+b.short+')');b.short=p.legDarts}
   }
 }
 
@@ -457,9 +465,9 @@ function botHit(aim,sd){
   return t;
 }
 function botTick(){
-  if(botT||!G||G.done||!G.players[G.cur].bot)return;
+  if(botT||dlg||!G||G.done||!G.players[G.cur].bot)return;
   botT=setTimeout(()=>{
-    botT=null;if(!G||G.done)return;const p=G.players[G.cur];if(!p.bot)return;
+    botT=null;if(!G||G.done||dlg)return;const p=G.players[G.cur];if(!p.bot)return;
     if(G.pending)confirmTurn(1);else throwDart(botHit(botAim(p),BOT[p.bot].sd),1);
   },G.pending?1600:G.turn.length?850:1300);
 }
@@ -475,7 +483,7 @@ function endTurn(bust,win){
   if(win){
     if(G.mode!='x01'){finish(p.id);return}
     const ms=mates(p),who=p.team!=null?'Team '+'AB'[p.team]:p.name;
-    ms.forEach(q=>{q.legs++;q.lw++});G.legs.push({w:p.id,darts:ms.reduce((a,q)=>a+q.legDarts,0),co:sc,t:p.team});
+    ms.forEach(q=>{q.legs++;q.lw++});G.legs.push({w:p.id,darts:ms.reduce((a,q)=>a+q.legDarts,0),co:sc,t:p.team,mx:ms.some(q=>q.subLeg==G.leg)?1:undefined});
     if(p.legs>=G.opts.legs){
       ms.forEach(q=>q.sets++);
       if(p.sets>=(G.opts.sets||1)){finish(p.id);return}
@@ -505,15 +513,16 @@ function finishTop(){
   const b=G.players.reduce((a,q)=>q.score>a.score?q:a);
   finish(G.mode=='bob'&&b.score<=0?null:b.id);
 }
-function finish(wid){
-  G.done=true;G.winner=wid;
+function finish(wid,unf){
+  G.done=true;G.winner=wid;G.unf=unf?1:0;dlg=null;
   const wp=G.players.find(p=>p.id==wid);
   db.sinceBackup=(db.sinceBackup||0)+1;
   db.matches.push({id:G.id,date:G.t0,mode:G.mode,opts:G.opts,
-    players:G.players.map(p=>({id:p.id,name:p.name,team:p.team,bot:p.bot||undefined,res:G.mode=='cricket'?p.pts:G.mode=='atc'?null:p.score,sets:p.sets,lw:p.lw})),
-    winner:wid,wt:wp?wp.team:null,turns:G.turns,legs:G.legs,dur:Math.round((Date.now()-G.t0)/1000)});
+    players:G.players.map((p,i)=>({id:p.id,name:p.name,team:p.team,slot:i,from:p.subLeg,bot:p.bot||undefined,res:G.mode=='cricket'?p.pts:G.mode=='atc'?null:p.score,sets:p.sets,lw:p.lw}))
+      .concat(G.left.map(p=>({id:p.id,name:p.name,team:p.team,slot:p.slot,left:1,res:null}))),
+    winner:wid,wt:wp?wp.team:null,unf:unf?1:undefined,turns:G.turns,legs:G.legs,dur:Math.round((Date.now()-G.t0)/1000)});
   // Bestleistungen und neue Auszeichnungen am Spielende
-  for(const p of G.players){
+  for(const p of G.players.concat(G.left)){
     const b=G.pb[p.id];if(p.bot||!b)continue;
     if(b.g>=3){
       if(G.mode=='x01'&&p.tDarts>=9){const a=p.sum/p.tDarts*3;if(b.avg>0&&a>b.avg)G.news.push(p.name+': bester Spiel-Average '+num(a)+' (bisher '+num(b.avg)+')')}
@@ -523,9 +532,37 @@ function finish(wid){
   }
   save();
 }
+/* Spiel vorzeitig beenden: angefangene Aufnahme zählt mit, das Spiel wird mit oder ohne Sieger gespeichert */
+function endEarly(wid){
+  if(!G||G.done)return;
+  pushHist();
+  if(G.turn.length){
+    const p=G.players[G.cur],bust=!!(G.pending&&G.pending.bust),sc=bust?0:turnScore(p,false);
+    G.turns.push({p:p.id,leg:G.leg,d:G.turn.map(t=>t.o?[0,0,t.o]:[t.s,t.m]),sc,bust:bust?1:0});
+    p.sum+=sc;p.tDarts+=G.turn.length;if(sc>p.best)p.best=sc;G.turn=[];G.pending=null;
+  }
+  if(!G.turns.length){G=null;hist=[];dlg=null;saveG();render();toast('Es wurde noch nichts geworfen – nichts gespeichert');return}
+  finish(wid||null,1);saveG();render();
+  if(wid)fx('win');
+}
+/* Spieler auswechseln: Platz, Punktestand und Team bleiben, ab jetzt zählen die Würfe für die neue Person */
+function substitute(){
+  const slot=G.players.findIndex(p=>p.id==subOut);
+  if(slot<0||!subIn){toast('Bitte beide Personen auswählen');return}
+  const np=db.players.find(p=>p.id==subIn);if(!np)return;
+  pushHist();
+  const p=G.players[slot],old={id:p.id,name:p.name,color:p.color,team:p.team,slot};
+  G.left=G.left.filter(q=>q.id!=np.id);
+  if(G.turns.some(t=>t.p==p.id))G.left.push(old);
+  Object.assign(p,{id:np.id,name:np.name,color:np.color,sum:0,tDarts:0,best:0,last:null,subLeg:G.leg});
+  if(!G.pb[np.id])G.pb[np.id]=pbBase(np.id);
+  const s=db.setup.sel,i=s.indexOf(old.id);if(i>=0&&!s.includes(np.id))s[i]=np.id;save();
+  dlg=null;subOut=subIn=null;markTurn();saveG();render();
+  toast(np.name+' übernimmt für '+old.name);say(np.name+' übernimmt für '+old.name,1);
+}
 function undo(){
   if(!hist.length){toast('Nichts zum Rückgängigmachen');return}
-  const id=G.id;G=JSON.parse(hist.pop());editIdx=null;
+  const id=G.id;G=JSON.parse(hist.pop());editIdx=null;dlg=null;
   if(botT){clearTimeout(botT);botT=null}
   while(hist.length&&!G.done&&G.players[G.cur].bot)G=JSON.parse(hist.pop());   // Würfe des Computers überspringen
   const n=db.matches.length;db.matches=db.matches.filter(m=>m.id!=id);if(db.matches.length!=n){db.sinceBackup=Math.max(0,db.sinceBackup-1);save()}
@@ -580,24 +617,24 @@ function stats(pid,days=0){
   let cs=0;
   for(const m of db.matches){
     if(m.date<since||!m.players.some(p=>p.id==pid))continue;
-    const me=m.players.find(p=>p.id==pid),won=isWin(m,me),multi=m.players.length>1;
+    const me=m.players.find(p=>p.id==pid),won=isWin(m,me),multi=m.players.filter(p=>!p.left).length>1&&!me.left&&!(m.unf&&m.winner==null);
     s.games++;s.modes[m.mode]=(s.modes[m.mode]||0)+1;
     if(multi){
       s.mg++;if(won){s.wins++;if(++cs>s.streak)s.streak=cs}else cs=0;
-      for(const o of m.players)if(o.id!=pid&&(me.team==null||o.team!==me.team)){const h=s.h2h[o.id]=s.h2h[o.id]||{name:o.name,g:0,w:0,l:0};h.name=o.name;h.g++;if(won)h.w++;else if(isWin(m,o))h.l++}
+      for(const o of m.players)if(o.id!=pid&&!o.left&&(me.team==null||o.team!==me.team)){const h=s.h2h[o.id]=s.h2h[o.id]||{name:o.name,g:0,w:0,l:0};h.name=o.name;h.g++;if(won)h.w++;else if(isWin(m,o))h.l++}
     }
     if(won&&m.dur&&(!s.fast||m.dur<s.fast.dur))s.fast={dur:m.dur,l:m.mode=='x01'?m.opts.start:MODES[m.mode]};
     if(m.mode=='bob'&&me.res!=null&&(s.bob==null||me.res>s.bob))s.bob=me.res;
     if(m.mode=='shanghai'&&me.res!=null&&(s.sh==null||me.res>s.sh))s.sh=me.res;
     if(won)for(const o of m.players)if(o.bot>s.botMax)s.botMax=o.bot;
     const cnt={},rest={},inn={},side={},sc=SCORING(m.mode),x=m.mode=='x01';let mp=0,md=0,lastT=null;
-    m.players.forEach(p=>side[p.id]=p.team!=null?'t'+p.team:p.id);
+    m.players.forEach(p=>side[p.id]=sideKey(p));const myLegs=new Set();
     for(const t of m.turns){
       // Rest wird je Seite (Spieler oder Team) mitgeführt
       const k=t.leg+'|'+side[t.p];let r=0;
       if(x){r=rest[k]??m.opts.start;rest[k]=r-t.sc}
       if(t.p!=pid){if(x&&t.d.some(d=>d[1]==2))inn[k]=1;continue}
-      lastT=t;
+      lastT=t;myLegs.add(t.leg);
       if(x&&!t.bust&&t.sc>0&&r-t.sc==0){const l=t.d[t.d.length-1];if(l[0]==25&&l[1]==2)s.coBull++}
       for(const[n,mu,o]of t.d){s.all++;if(!mu){s.miss++;if(o){s.outs[o]=(s.outs[o]||0)+1;s.outN++}}else{const k=lab({s:n,m:mu});s.hits[k]=(s.hits[k]||0)+1;s.seg[n+'_'+mu]=(s.seg[n+'_'+mu]||0)+1}}
       if(!sc)continue;
@@ -623,12 +660,14 @@ function stats(pid,days=0){
     if(m.mode=='shanghai'&&won&&lastT&&lastT.d.length==3&&new Set(lastT.d.map(d=>d[0])).size==1&&new Set(lastT.d.map(d=>d[1])).size==3&&lastT.d.every(d=>d[1]))s.shInst++;
     if(m.mode=='x01'){
       if(md){s.trend.push({d:m.date,v:mp/md*3,l:m.opts.start});if(md>=9&&mp/md*3>s.bestAvg)s.bestAvg=mp/md*3}
-      for(const l of m.legs||[]){
+      (m.legs||[]).forEach((l,li)=>{
+        // Legs zählen, in denen die Person dabei war (wichtig bei Auswechslungen)
+        const L=li+1;if(me.left?L>Math.max(0,...myLegs):me.from?L<me.from:false)return;
         s.legsP++;const mine=l.w==pid;
         if(mine||(me.team!=null&&l.t===me.team))s.legsW++;
         if(mine){s.coHit++;if(l.co>s.co)s.co=l.co;
-          if(me.team==null){s.wDarts+=l.darts;s.wl++;const k=m.opts.start;if(!s.short[k]||l.darts<s.short[k])s.short[k]=l.darts}}
-      }
+          if(me.team==null&&!l.mx){s.wDarts+=l.darts;s.wl++;const k=m.opts.start;if(!s.short[k]||l.darts<s.short[k])s.short[k]=l.darts}}
+      });
     }
   }
   s.avg=s.darts?s.pts/s.darts*3:NaN;s.f9=s.f9d?s.f9p/s.f9d*3:NaN;
@@ -775,19 +814,39 @@ function vGame(){
   <div class="pcards n${sides.length} ${sides.length>4?'many':''}">${cards}</div>
   <div class="turn"><div class="slots">${slots}</div>${conf}</div>
   <div class="ctl"><button class="btn" data-act="miss">✕ Komplett daneben</button><button class="btn" data-act="undo">↶ Rückgängig</button></div>
-  <div class="ctl2"><span class="row"><button class="btn sm ${db.cfg.voice?'on':'off'}" data-act="tog" data-k="voice">🗣 Ansage</button><button class="btn sm ${db.cfg.sound?'on':'off'}" data-act="tog" data-k="sound">🔔 Töne</button></span><span class="row">${G.mode=='train'?'<button class="btn pri sm" data-act="endtrain">✓ Training speichern</button>':''}<button class="btn dan sm" data-act="abort">Abbrechen</button></span></div>
+  <div class="ctl2"><span class="row"><button class="btn sm ${db.cfg.voice?'on':'off'}" data-act="tog" data-k="voice">🗣 Ansage</button><button class="btn sm ${db.cfg.sound?'on':'off'}" data-act="tog" data-k="sound">🔔 Töne</button></span><span class="row">${G.mode=='train'?'<button class="btn pri sm" data-act="endtrain">✓ Training speichern</button>':''}<button class="btn sm" data-act="subopen">⇄ Wechseln</button><button class="btn sm dan" data-act="dlg" data-v="end">⏹ Beenden</button></span></div>
   </div>
   <div class="boardwrap ${lock?'dim':''}">${boardSVG({hl,live:true,marks:G.turn})}${lock?'<div class="lock">Aufnahme vollständig –<br>bitte links bestätigen</div>':''}</div>
   </div>`;
+  if(dlg&&!G.done)h+=dlgHTML(sides,tms);
   if(G.done){
     const w=G.players.find(q=>q.id==G.winner),ws=w?mates(w):[],sc=SCORING(G.mode),po=POINTS(G.mode),lgs=x&&(G.opts.legs>1||sets);
-    h+=`<div class="ov"><div class="card"><div class="trophy">${w?'🏆':'✅'}</div><h2>${w?(tms?'Team '+'AB'[w.team]+' – ':'')+ws.map(q=>esc(q.name)).join(' &amp; ')+(ws.length>1?' gewinnen!':' gewinnt!'):G.mode=='bob'?'Spiel beendet':'Training gespeichert'}</h2>
+    h+=`<div class="ov"><div class="card"><div class="trophy">${w?'🏆':'✅'}</div><h2>${w?(tms?'Team '+'AB'[w.team]+' – ':'')+ws.map(q=>esc(q.name)).join(' &amp; ')+(ws.length>1?' gewinnen!':' gewinnt!'):G.unf?'Spiel beendet – ohne Sieger':G.mode=='bob'?'Spiel beendet':'Training gespeichert'}</h2>${G.unf?'<p class="mute small">Alle bisherigen Würfe sind in Statistik und Verlauf gespeichert.</p>':''}
     <table><tr><th>Spieler</th>${sc?'<th class="n">Ø</th><th class="n">Beste</th>':''}${po?'<th class="n">Punkte</th>':''}<th class="n">Darts</th>${sets?'<th class="n">Sets</th>':''}${lgs?'<th class="n">Legs</th>':''}</tr>${G.players.map(q=>`<tr><td>${esc(q.name)}</td>${sc?`<td class="n">${num(q.tDarts?q.sum/q.tDarts*3:NaN)}</td><td class="n">${q.best}</td>`:''}${po?`<td class="n">${G.mode=='cricket'?q.pts:q.score}</td>`:''}<td class="n">${q.tDarts}</td>${sets?`<td class="n">${q.sets}</td>`:''}${lgs?`<td class="n">${q.lw}</td>`:''}</tr>`).join('')}</table>
     ${G.news.length?'<div class="news"><b>⭐ Neue Bestleistungen</b>'+G.news.map(t=>'<div>'+esc(t)+'</div>').join('')+'</div>':''}
     ${Object.keys(G.badges).length?'<div class="news"><b>🏅 Neue Auszeichnungen</b>'+G.players.filter(q=>G.badges[q.id]).map(q=>'<div>'+esc(q.name)+': '+G.badges[q.id].map(k=>{const b=BADGES.find(b=>b[0]==k);return b[1]+' '+b[2]}).join(' · ')+'</div>').join('')+'</div>':''}
     <div class="row" style="justify-content:center;margin-top:18px"><button class="btn pri" data-act="rematch">Revanche</button><button class="btn" data-act="menu">Zum Menü</button><button class="btn sm" data-act="undo">↶ Letzte Aufnahme korrigieren</button></div></div></div>`;
   }
   return h;
+}
+function dlgHTML(sides,tms){
+  if(dlg=='end'){
+    const multi=sides.length>1;
+    return `<div class="ov"><div class="card dlg"><h2>Spiel beenden</h2><p class="mute small">Alle bisher geworfenen Darts bleiben in Statistik und Verlauf – auch die angefangene Aufnahme.</p>
+    <button class="btn pri" data-act="endsave">✓ Ohne Sieger beenden &amp; speichern</button>
+    ${multi?`<h3>Oder als Sieg werten für</h3><div class="row" style="justify-content:center">${sides.map(ms=>`<button class="btn sm" style="--c:${ms[0].color};border-color:var(--c)" data-act="endwin" data-id="${ms[0].id}">🏆 ${tms?'Team '+'AB'[ms[0].team]:esc(ms[0].name)}</button>`).join('')}</div>`:''}
+    <h3>Oder</h3><div class="row" style="justify-content:center"><button class="btn sm dan" data-act="abort">Verwerfen – nichts speichern</button><button class="btn sm" data-act="dlg" data-v="">Weiterspielen</button></div></div></div>`;
+  }
+  if(dlg=='sub'){
+    const ins=db.players.filter(p=>!G.players.some(q=>q.id==p.id));
+    return `<div class="ov"><div class="card dlg"><h2>Spieler wechseln</h2>
+    <h3>Wer hört auf?</h3><div class="row" style="justify-content:center">${G.players.filter(q=>!q.bot).map(q=>`<span class="chip ${subOut==q.id?'on':''}" style="--c:${q.color}" data-act="subout" data-id="${q.id}"><i></i>${esc(q.name)}</span>`).join('')}</div>
+    <h3>Wer übernimmt?</h3><div class="row" style="justify-content:center">${ins.map(p=>`<span class="chip ${subIn==p.id?'on':''}" style="--c:${p.color}" data-act="subin" data-id="${p.id}"><i></i>${esc(p.name)}</span>`).join('')||'<span class="mute small">Alle angelegten Spieler sind schon im Spiel.</span>'}</div>
+    <div class="row" style="justify-content:center;margin-top:10px"><input type="text" id="subnew" placeholder="Neuer Spieler" maxlength="20"><button class="btn sm" data-act="subadd">+ Anlegen</button></div>
+    <p class="mute small">Punktestand, Platz in der Reihenfolge und Team bleiben. Alle Würfe bis jetzt zählen für die Person, die aufhört, alle ab jetzt für die neue. Wer aufhört, bekommt für dieses Spiel weder Sieg noch Niederlage.</p>
+    <div class="row" style="justify-content:center"><button class="btn pri" data-act="subdo">⇄ Wechseln</button><button class="btn" data-act="dlg" data-v="">Abbrechen</button></div></div></div>`;
+  }
+  return '';
 }
 const tile=(l,v,sub)=>`<div><small>${l}</small><b>${v}</b>${sub?'<em>'+sub+'</em>':''}</div>`;
 function vPlayers(){
@@ -838,14 +897,14 @@ function vRecords(){
 function vMatch(){
   const m=db.matches.find(m=>m.id==curM);if(!m){view='history';return vHistory()}
   const x=m.mode=='x01',sc=SCORING(m.mode),po=POINTS(m.mode),o=m.opts||{},nm=id=>(m.players.find(p=>p.id==id)||{}).name||'?';
-  const side={};m.players.forEach(p=>side[p.id]=p.team!=null?'t'+p.team:p.id);
+  const side={};m.players.forEach(p=>side[p.id]=sideKey(p));
   let h=`<div class="card"><div class="ph" style="margin:0"><button class="btn sm" data-act="nav" data-v="history">← Verlauf</button><div style="flex:1;min-width:0"><h2 style="margin:0">${esc(modeLabel(m))}</h2><div class="mute small">${new Date(m.date).toLocaleString('de-DE',{dateStyle:'full',timeStyle:'short'})} · Dauer ${dur(m.dur||0)}</div></div></div></div>`;
   h+='<div class="card"><h2>Ergebnis</h2><div style="overflow-x:auto"><table><tr><th>Spieler</th>'+(sc?'<th class="n">Ø</th><th class="n">Ø First 9</th><th class="n">Beste</th><th class="n">100+</th><th class="n">180</th>':'')+(po?'<th class="n">Punkte</th>':'')+'<th class="n">Darts</th>'+(x?'<th class="n">Legs</th>':'')+'</tr>';
   for(const p of m.players){
     let pts=0,d=0,best=0,c100=0,c180=0,f9p=0,f9d=0;const cnt={};
     for(const t of m.turns)if(t.p==p.id){pts+=t.sc;d+=t.d.length;if(t.sc>best)best=t.sc;if(t.sc>=100)c100++;if(t.sc==180)c180++;cnt[t.leg]=(cnt[t.leg]||0)+1;if(cnt[t.leg]<=3){f9p+=t.sc;f9d+=t.d.length}}
     const lw=p.lw??(m.legs||[]).filter(l=>l.w==p.id).length;
-    h+=`<tr><td>${isWin(m,p)?'🏆 ':''}<b>${esc(p.name)}</b>${p.team!=null?' <span class="mute small">Team '+'AB'[p.team]+'</span>':''}</td>${sc?`<td class="n">${num(d?pts/d*3:NaN)}</td><td class="n">${x?num(f9d?f9p/f9d*3:NaN):'–'}</td><td class="n">${best}</td><td class="n">${c100}</td><td class="n">${c180}</td>`:''}${po?`<td class="n">${p.res??'–'}</td>`:''}<td class="n">${d}</td>${x?`<td class="n">${lw}</td>`:''}</tr>`;
+    h+=`<tr><td>${isWin(m,p)?'🏆 ':''}<b>${esc(p.name)}</b>${p.team!=null?' <span class="mute small">Team '+'AB'[p.team]+'</span>':''}${p.left?' <span class="mute small">ausgewechselt</span>':''}</td>${sc?`<td class="n">${num(d?pts/d*3:NaN)}</td><td class="n">${x?num(f9d?f9p/f9d*3:NaN):'–'}</td><td class="n">${best}</td><td class="n">${c100}</td><td class="n">${c180}</td>`:''}${po?`<td class="n">${p.res??'–'}</td>`:''}<td class="n">${d}</td>${x?`<td class="n">${lw}</td>`:''}</tr>`;
   }
   h+='</table></div></div><div class="card"><h2>Alle Aufnahmen</h2><div style="overflow-x:auto">';
   let leg=0;const rest={},rd={};
@@ -1017,9 +1076,10 @@ function vHistory(){
       let extra=SCORING(m.mode)?' Ø '+num(d?pts/d*3:NaN):POINTS(m.mode)&&p.res!=null?' '+p.res+' Punkte':' '+d+' Darts';
       if(lg){const lw=p.lw??(m.legs||[]).filter(l=>l.w==p.id).length;extra+=' · '+((o.sets||1)>1&&p.sets!=null?p.sets+' Sets, ':'')+lw+' Legs'}
       if(p.team!=null)extra=' Team '+'AB'[p.team]+' ·'+extra;
+      if(p.left)extra+=' · ausgewechselt';
       return (isWin(m,p)?'🏆 <b>'+esc(p.name)+'</b>':esc(p.name))+'<span class="mute small">'+extra+'</span>';
     }).join('<br>');
-    h+=`<tr class="click" data-act="match" data-id="${m.id}"><td>${new Date(m.date).toLocaleString('de-DE',{dateStyle:'short',timeStyle:'short'})}</td><td>${esc(modeLabel(m))}</td><td>${pl}</td><td>${dur(m.dur||0)}</td><td><button class="btn sm dan" data-act="delm" data-id="${m.id}">🗑</button></td></tr>`;
+    h+=`<tr class="click" data-act="match" data-id="${m.id}"><td>${new Date(m.date).toLocaleString('de-DE',{dateStyle:'short',timeStyle:'short'})}</td><td>${esc(modeLabel(m))}${m.unf?'<br><span class="mute small">vorzeitig beendet'+(m.winner==null?', ohne Sieger':'')+'</span>':''}</td><td>${pl}</td><td>${dur(m.dur||0)}</td><td><button class="btn sm dan" data-act="delm" data-id="${m.id}">🗑</button></td></tr>`;
   }
   return h+'</table></div></div>';
 }
@@ -1053,7 +1113,7 @@ function exportCSV(kind){
     for(const p of db.players){const s=stats(p.id);rows.push([p.name,s.games,s.mg,s.wins,s.mg?Math.round(s.wins/s.mg*100):'',num(s.avg,2),num(s.f9,2),s.dTry,s.dHit,s.coTry,s.coHit,s.coTry?Math.round(s.coHit/s.coTry*100):'',s.legsP,s.legsW,s.best,s.topFreq?s.topFreq[0]:'',s.c180,s.c140,s.c100,s.co,s.shortTxt,s.fast?s.fast.dur:'',s.topHits[0]?s.topHits[0][0]:'',s.all,s.miss,s.busts])}
   }else if(kind=='matches'){
     rows=[['Spiel-ID','Datum','Modus','Spieler','Sieger','Dauer (s)','Legs']];
-    for(const m of db.matches){const n=id=>(m.players.find(p=>p.id==id)||{}).name||'';rows.push([m.id,dt(m.date),modeLabel(m),m.players.map(p=>p.name+(p.team!=null?' [Team '+'AB'[p.team]+']':'')+(p.res!=null&&m.mode!='x01'&&m.mode!='train'?' ('+p.res+')':'')).join(', '),m.players.filter(p=>isWin(m,p)).map(p=>p.name).join(' & '),m.dur,(m.legs||[]).map(l=>n(l.w)+' ('+l.darts+' Darts)').join(', ')])}
+    for(const m of db.matches){const n=id=>(m.players.find(p=>p.id==id)||{}).name||'';rows.push([m.id,dt(m.date),modeLabel(m),m.players.map(p=>p.name+(p.left?' (ausgewechselt)':'')+(p.team!=null?' [Team '+'AB'[p.team]+']':'')+(p.res!=null&&m.mode!='x01'&&m.mode!='train'?' ('+p.res+')':'')).join(', '),m.players.filter(p=>isWin(m,p)).map(p=>p.name).join(' & ')||(m.unf?'vorzeitig beendet, ohne Sieger':''),m.dur,(m.legs||[]).map(l=>n(l.w)+' ('+l.darts+' Darts)').join(', ')])}
   }else{
     rows=[['Spiel-ID','Datum','Modus','Leg','Spieler','Dart 1','Dart 2','Dart 3','Punkte','Überworfen']];
     for(const m of db.matches)for(const t of m.turns){const L=i=>t.d[i]?lab({s:t.d[i][0],m:t.d[i][1],o:t.d[i][2]}):'';rows.push([m.id,dt(m.date),modeLabel(m),t.leg,(m.players.find(p=>p.id==t.p)||{}).name,L(0),L(1),L(2),t.sc,t.bust?'ja':''])}
@@ -1095,8 +1155,16 @@ const acts={
   confirm:()=>confirmTurn(),
   undo:undo,
   endtrain:endTraining,
-  abort:()=>{if(confirm('Laufendes Spiel verwerfen? Es wird nicht gespeichert.')){G=null;hist=[];editIdx=null;saveG();render()}},
-  menu:()=>{G=null;hist=[];saveG();render()},
+  abort:()=>{if(confirm('Spiel wirklich verwerfen? Die Würfe werden nicht gespeichert.')){G=null;hist=[];editIdx=null;dlg=null;saveG();render()}},
+  dlg:e=>{dlg=e.dataset.v||null;render()},
+  endsave:()=>endEarly(null),
+  endwin:e=>{const p=G.players.find(q=>q.id==e.dataset.id);if(p&&confirm('Spiel beenden und als Sieg für '+(G.opts.teams?'Team '+'AB'[p.team]:p.name)+' werten?'))endEarly(p.id)},
+  subopen:()=>{if(G.turn.length||G.pending){toast('Bitte erst die laufende Aufnahme beenden bzw. bestätigen');return}const c=G.players[G.cur];subOut=c.bot?null:c.id;subIn=null;dlg='sub';render()},
+  subout:e=>{subOut=e.dataset.id;render()},
+  subin:e=>{subIn=e.dataset.id;render()},
+  subadd:()=>{const i=$('#subnew'),name=i.value.trim();if(!name){i.focus();return}const p={id:uid(),name,color:COLORS[db.players.length%COLORS.length]};db.players.push(p);save();subIn=p.id;render()},
+  subdo:()=>substitute(),
+  menu:()=>{G=null;hist=[];dlg=null;saveG();render()},
   rematch:()=>{const s=db.setup.sel;if(s.length>1)s.push(s.shift());save();newGame()},
   player:e=>{curP=e.dataset.id;view='player';render();scrollTo(0,0)},
   match:e=>{curM=e.dataset.id;view='match';render();scrollTo(0,0)},
@@ -1132,7 +1200,7 @@ document.addEventListener('click',e=>{
 document.addEventListener('change',e=>{
   if(e.target.type=='color'){const p=db.players.find(p=>p.id==e.target.dataset.id);if(p){p.color=e.target.value;save();render()}}
 });
-document.addEventListener('keydown',e=>{if(e.key=='Enter'&&e.target.id=='np')addPlayer()});
+document.addEventListener('keydown',e=>{if(e.key=='Enter'&&e.target.id=='np')addPlayer();if(e.key=='Enter'&&e.target.id=='subnew')acts.subadd()});
 document.addEventListener('visibilitychange',wake);
 /* Online gehostet: Offline-Modus einschalten und den Browser bitten, die Daten nicht automatisch zu löschen */
 if(typeof location!='undefined'&&location.protocol=='https:'){
